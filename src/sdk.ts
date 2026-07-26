@@ -1,6 +1,6 @@
 // Обёртка Yandex Games SDK с моком для локальной разработки.
 // Правила из PLAN.md §4-5: пауза игры на рекламе, награда только по onRewarded,
-// частотные капы interstitial, троттлинг сохранений.
+// частотные капы interstitial, троттлинг сохранений, покупки через Payments API.
 import { INTERSTITIAL } from './config';
 
 type Dict = Record<string, unknown>;
@@ -8,6 +8,7 @@ declare global { interface Window { YaGames?: { init(): Promise<any> } } }
 
 let ysdk: any = null;
 let player: any = null;
+let payments: any = null;
 const sessionStart = Date.now();
 let lastInterstitial = 0;
 let lastSave = 0;
@@ -17,6 +18,7 @@ export async function initSDK(): Promise<void> {
     if (!window.YaGames) return; // локальный dev — работаем на моках
     ysdk = await window.YaGames.init();
     player = await ysdk.getPlayer({ scopes: false }).catch(() => null);
+    payments = await ysdk.getPayments({ signed: true }).catch(() => null);
     ysdk.features?.LoadingAPI?.ready();
   } catch (e) {
     console.warn('YSDK init failed, using mocks', e);
@@ -49,6 +51,28 @@ export function maybeInterstitial(): boolean {
   gameplayStop();
   ysdk.adv.showFullscreenAdv({ callbacks: { onClose: gameplayStart, onError: gameplayStart } });
   return true;
+}
+
+/** Покупка. Расходники (пакеты кристаллов) консьюмим, one-time (no_ads, starter) — нет. */
+export async function purchase(id: string, consumable: boolean): Promise<boolean> {
+  if (!payments) return window.confirm(`[dev-мок] Купить «${id}»?`); // локальный dev
+  try {
+    const p = await payments.purchase({ id });
+    if (consumable) await payments.consumePurchase(p.purchaseToken).catch(() => {});
+    return true;
+  } catch { return false; }
+}
+
+/** Восстановление one-time покупок (no_ads/starter) при входе. */
+export async function restorePurchases(): Promise<string[]> {
+  try { return ((await payments?.getPurchases()) ?? []).map((p: any) => p.productID); }
+  catch { return []; }
+}
+
+export function setLeaderboardScore(score: number): void {
+  ysdk?.getLeaderboards?.()
+    .then((lb: any) => lb.setLeaderboardScore('weekly_merges', score))
+    .catch(() => {});
 }
 
 /** Сохранение: облако + localStorage, не чаще раза в 5 сек. */
