@@ -67,6 +67,7 @@ export class GameScene extends Phaser.Scene {
     for (const id of await sdk.restorePurchases()) {
       if (id === 'no_ads') S.noAds = true;
       if (id === 'starter') S.starterBought = true;
+      if (id === 'offline_vip') S.offlineVip = true;
     }
 
     this.ev = activeEvent();
@@ -1130,17 +1131,29 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- офлайн-доход ----------
+  /** Уровень офлайна: бесплатный (50% за 2 ч) или купленный «склад» (100% за 5 ч). */
+  private offlineTier() { return S.offlineVip ? INCOME.offlinePaid : INCOME.offlineFree; }
+
   private offlinePopup() {
-    // Офлайн-доход = доход поля на момент выхода × время (кап 8 часов).
-    const seconds = Math.min((Date.now() - S.lastSeen) / 1000, INCOME.offlineCapHours * 3600);
-    const earned = Math.floor(S.incomeRate * INCOME.offlineRate * (seconds * 1000 / INCOME.periodMs));
+    const tier = this.offlineTier();
+    const away = (Date.now() - S.lastSeen) / 1000;
+    const seconds = Math.min(away, tier.hours * 3600);
+    const earned = Math.floor(S.incomeRate * tier.rate * (seconds * 1000 / INCOME.periodMs));
     if (earned < OFFLINE_MIN_COINS) return;
     const p = ui.panel(this, t('offline.title'));
-    this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('offline.desc', { n: earned }), { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 220, t('offline.desc', { n: earned }), { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 130,
+      t('offline.tier', { hours: tier.hours, percent: Math.round(tier.rate * 100) }),
+      { fontFamily: FONT, fontSize: '21px', color: '#c9beee', align: 'center' }).setOrigin(0.5));
     const claim = (mult: number) => { S.coins += earned * mult; coinSound(); this.refreshHud(); persist(); p.destroy(); };
-    this.addTo(p, ui.button(this, W / 2, H / 2, 420, 72, t('offline.claim', { n: earned }), 0x5a48a8, () => claim(1)));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 100, 480, 72, t('offline.claim2', { n: earned * 2 }), 0x2e7d5b,
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 30, 420, 72, t('offline.claim', { n: earned }), 0x5a48a8, () => claim(1)));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 70, 480, 72, t('offline.claim2', { n: earned * 2 }), 0x2e7d5b,
       () => sdk.showRewarded(() => claim(2))));
+    // Про «склад» говорим только когда время реально упёрлось в лимит: это честный
+    // момент («ты потерял часы»), а не навязчивое предложение при каждом входе.
+    if (!S.offlineVip && away > tier.hours * 3600 * 1.2)
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 190, 520, 66, t('offline.upsell', { hours: INCOME.offlinePaid.hours }), 0x8f5ad0,
+        () => { p.destroy(); openShop(this, this.api); }, 20));
   }
 
   // ---------- FTUE: первое слияние — в первые 10 секунд (PLAN.md §15) ----------

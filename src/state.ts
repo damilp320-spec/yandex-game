@@ -27,6 +27,7 @@ export const S = {
   zoneUnlocked: [true],
   rowUnlocked: false,
   noAds: false,
+  offlineVip: false,      // куплен «склад»: офлайн 100% за 5 ч вместо 50% за 2 ч
   starterBought: false,
   starterOffered: false,
   adFreeUntil: 0,

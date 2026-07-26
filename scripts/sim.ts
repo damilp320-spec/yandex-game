@@ -5,7 +5,8 @@
 // поэтому цифры двигаются вместе с игрой: поменял конфиг — перезапустил sim.
 //
 // Модель поведения игрока (осознанные допущения, меняй здесь):
-//   3 сессии в день × 7 минут = 21 активная минута, остальное — офлайн (кап 8 ч);
+//   3 сессии в день × 7 минут = 21 активная минута, остальное — офлайн по
+//   бесплатному уровню (INCOME.offlineFree: половина ставки за 2 часа);
 //   в активную минуту: 12 тиков дохода, TAPS_PER_MIN тапов со средним комбо,
 //   бесплатное существо по кулдауну GEN.cooldownMs (одна кнопка, «умный» рандом),
 //   покупка существ пока хватает монет с запасом, жадные слияния,
@@ -210,7 +211,12 @@ class Sim {
    * означает «зона пройдена» — дальше открывают следующую, где доход выше, но поле
    * пустое и всё начинается заново. Доход считается только с текущей локации.
    */
-  get saturated() { return this.board.length >= this.capacity - 1 && !this.canMerge(); }
+  get saturated() {
+    // «Зона пройдена» = большая часть поля занята максимальным уровнем. Прежний
+    // критерий (поле забито И сливать нечего) ломался о продажи: после каждой
+    // продажи в поле появлялась дырка, и проверка не срабатывала никогда.
+    return this.board.filter(c => c.level === MAX_LEVEL).length >= Math.floor(this.capacity * 0.6);
+  }
   canMerge() {
     for (let i = 0; i < this.board.length; i++)
       for (let j = i + 1; j < this.board.length; j++) {
@@ -231,8 +237,10 @@ class Sim {
   }
 
   offline(hours: number) {
-    const capped = Math.min(hours, INCOME.offlineCapHours);
-    this.coins += Math.floor(this.income * INCOME.offlineRate * (capped * 3_600_000 / INCOME.periodMs));
+    // Считаем по бесплатному уровню: баланс проверяем на неплатящем игроке.
+    const tier = INCOME.offlineFree;
+    const capped = Math.min(hours, tier.hours);
+    this.coins += Math.floor(this.income * tier.rate * (capped * 3_600_000 / INCOME.periodMs));
   }
 }
 

@@ -28,6 +28,9 @@ const PRODUCTS: Product[] = [
   { id: 'gems_m', consumable: true, grant: () => { S.gems += 500; } },
   { id: 'gems_l', consumable: true, grant: () => { S.gems += 1200; } },
   { id: 'no_ads', consumable: false, once: () => S.noAds, grant: () => { S.noAds = true; } },
+  // «Склад»: офлайн платит полную ставку 5 часов вместо половины за 2. Не даёт силы
+  // в бою — экономит время, поэтому не ломает баланс арены.
+  { id: 'offline_vip', consumable: false, once: () => S.offlineVip, grant: () => { S.offlineVip = true; } },
 ];
 
 /** Сундук: вариативное вознаграждение — уровни 2–4; секретный «67» с шансом 6,7%. */

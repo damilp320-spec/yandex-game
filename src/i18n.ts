@@ -171,6 +171,10 @@ const RU: Record<string, string> = {
   'offline.desc': 'Твои брейнроты наработали:\n🪙 {n}',
   'offline.claim': 'Забрать {n}🪙',
   'offline.claim2': '🎬 Забрать ×2 ({n}🪙)',
+  'offline.tier': 'Склад копит {hours} ч и платит {percent}% ставки',
+  'offline.upsell': '📦 Расширить склад до {hours} ч и 100%',
+  'p.offline_vip.title': 'Склад брейнротов',
+  'p.offline_vip.desc': 'Офлайн копит 5 часов по полной ставке (вместо 2 часов и половины) — навсегда',
 
   'shop.title': '💎 Магазин',
   'shop.freeChest': '🎁 Бесплатный сундук за рекламу',
@@ -358,6 +362,10 @@ const EN: Record<string, string> = {
   'offline.desc': 'Your brainrots earned:\n🪙 {n}',
   'offline.claim': 'Claim {n}🪙',
   'offline.claim2': '🎬 Claim ×2 ({n}🪙)',
+  'offline.tier': 'Storage holds {hours}h and pays {percent}% of the rate',
+  'offline.upsell': '📦 Upgrade storage to {hours}h and 100%',
+  'p.offline_vip.title': 'Brainrot storage',
+  'p.offline_vip.desc': 'Offline banks 5 hours at the full rate (instead of 2 hours at half) — forever',
 
   'shop.title': '💎 Shop',
   'shop.freeChest': '🎁 Free chest for an ad',
@@ -545,6 +553,10 @@ const TR: Record<string, string> = {
   'offline.desc': 'Brainrot\'ların kazandı:\n🪙 {n}',
   'offline.claim': '{n}🪙 al',
   'offline.claim2': '🎬 ×2 al ({n}🪙)',
+  'offline.tier': 'Depo {hours} saat biriktirir ve oranın %{percent}\'ini öder',
+  'offline.upsell': '📦 Depoyu {hours} saate ve %100\'e yükselt',
+  'p.offline_vip.title': 'Brainrot deposu',
+  'p.offline_vip.desc': 'Çevrimdışı 5 saat tam oranla birikir (2 saat ve yarım oran yerine) — kalıcı',
 
   'shop.title': '💎 Mağaza',
   'shop.freeChest': '🎁 Reklamla bedava sandık',
