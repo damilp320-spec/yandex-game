@@ -332,8 +332,12 @@ archRates.sort((a, b) => b.wr - a.wr).forEach(({ chain, wr }) => {
   const st = unitStats(chain, 3, false);
   console.log(`  цепочка ${pad(chain, 2)} (${st.type.padEnd(6)}, ⚔${pad(st.dmg, 4)} ❤${pad(st.hp, 5)} ${st.spd}мс): ${wr.toFixed(1)}%`);
 });
+// Разброс winrate — ПЛОХОЙ измеритель баланса в этом формате: снежный ком (убил
+// бойца → урон врага упал на 20%) раздувает разницу в силе 5% до счёта 5:95.
+// Настоящая мера — множитель силы из блока КАЛИБРОВКА ЦЕПОЧЕК ниже.
 const spread = archRates[0].wr - archRates[archRates.length - 1].wr;
-console.log(`  разброс: ${spread.toFixed(1)} п.п. ${spread > 30 ? '— ПЛОХО: архетипы не сбалансированы' : '— OK'}`);
+console.log(`  разброс winrate: ${spread.toFixed(1)} п.п. — сам по себе ни о чём не говорит,`);
+console.log('  смотри «КАЛИБРОВКА ЦЕПОЧЕК»: там разница в силе, а не усиленная снежным комом');
 // Диагностика: длительность боя и доля таймаутов. Если бои упираются в лимит,
 // исход решает правило «у кого больше выживших», а не сила составов.
 {
@@ -347,6 +351,69 @@ console.log(`  разброс: ${spread.toFixed(1)} п.п. ${spread > 30 ? '— 
 }
 console.log(`  (моно-состав против случайной смеси: ${rate(() => simulateBattle(Array.from({ length: 5 }, () => [REF, 3]), randomTeam(3, 3)), 300).toFixed(0)}% — ` +
   'превосходство фокуса над смесью, так и задумано)');
+
+// ---------- КАЛИБРОВКА ЦЕПОЧЕК: сколько на самом деле стоит каждая ----------
+// Для каждой цепочки бисекцией ищем множитель силы f, при котором её моно-состав
+// играет вровень с эталонной цепочкой, усиленной в f раз. Это и есть настоящая
+// относительная сила цепочки — её и надо подставить в оценку для матчмейкинга,
+// чтобы слабый состав получал соперников по себе.
+console.log('\n=== КАЛИБРОВКА ЦЕПОЧЕК (относительно цепочки 0) ===');
+S.upgrades = { atk: 0, hp: 0 };
+const chainValues: number[] = [];
+for (let ch = 0; ch < 12; ch++) {
+  if (ch === REF) { chainValues.push(1); continue; }
+  let lo = 0.25, hi = 4;
+  for (let it = 0; it < 10; it++) {
+    const mid = (lo + hi) / 2;
+    // моно-состав цепочки против эталона, усиленного в mid раз (симметрично)
+    const fwd = rate(() => simulateBattle(monoOf(ch), monoOf(REF), 1, mid), 60);
+    const bwd = rate(() => simulateBattle(monoOf(REF), monoOf(ch), mid, 1), 60);
+    const wr = (fwd + (100 - bwd)) / 2;
+    if (wr > 50) lo = mid; else hi = mid; // выстоял против более сильного — цепочка дороже
+  }
+  chainValues.push(Math.round(((lo + hi) / 2) * 100) / 100);
+}
+chainValues.forEach((v, ch) => {
+  const st = unitStats(ch, 3, false);
+  console.log(`  цепочка ${pad(ch, 2)} (${st.type.padEnd(6)}): ×${v.toFixed(2)}`);
+});
+console.log(`  → впиши в BALANCE.chainValue: [${chainValues.map(v => v.toFixed(2)).join(', ')}]`);
+const cvSpread = Math.max(...chainValues) / Math.min(...chainValues);
+console.log(`  разница между сильнейшей и слабейшей цепочкой: ×${cvSpread.toFixed(2)} ` +
+  `${cvSpread > 1.35 ? '— ПЛОХО: перекос по цепочкам' : '— OK (цель ≤ ×1.35)'}`);
+
+// ---------- СВИП: ищем гранулярность боя (SIM_SWEEP=1 npm run sim) ----------
+// Гипотеза: чем больше ударов уходит на убийство, тем меньше исход зависит от
+// целочисленных порогов, и тем ближе winrate к разнице в силе. Для честного
+// сравнения на каждом шаге заново калибруем typeValue бисекцией.
+if (process.env.SIM_SWEEP) {
+  console.log('\n=== СВИП: масштаб периода атаки vs разброс силы цепочек ===');
+  console.log('spdScale | ударов на убийство | разброс цепочек | длительность боя | зеркальный бой');
+  const REF2 = 0;
+  for (const scale of [1, 0.62, 0.45, 0.3]) {
+    BALANCE.spdScale = scale;
+    // перекалибровка typeValue под новую гранулярность
+    for (const tp of ['melee', 'splash'] as const) {
+      let lo = 0.4, hi = 4.0;
+      for (let it = 0; it < 10; it++) {
+        const mid = (lo + hi) / 2;
+        BALANCE.typeValue[tp] = mid;
+        if (vsRef(tp) > 50) lo = mid; else hi = mid;
+      }
+      BALANCE.typeValue[tp] = (lo + hi) / 2;
+    }
+    const rates = [];
+    for (let ch = 0; ch < 12; ch++) if (ch !== REF2) rates.push(duel(ch, REF2, 120));
+    const spread = Math.max(...rates) - Math.min(...rates);
+    const st = unitStats(REF2, 3, false);
+    const hitsToKill = st.hp / Math.max(1, st.dmg);
+    let ms = 0, n = 0;
+    for (let ch = 0; ch < 12; ch++) { ms += simulateBattleDetailed(monoOf(ch), monoOf(REF2)).ms; n++; }
+    console.log([pad(scale.toFixed(2), 8), pad(hitsToKill.toFixed(1), 19), pad(`${spread.toFixed(0)} п.п.`, 16),
+      pad(`${(ms / n / 1000).toFixed(1)} с`, 17), pad(`${rate(() => simulateBattle(mirror, mirror), 400).toFixed(0)}%`, 15)].join(' |'));
+  }
+  BALANCE.spdScale = 1;
+}
 
 // ---------- КУБКИ: скорость роста ----------
 console.log('\n=== КУБКИ: сколько боёв до милстоунов ===');

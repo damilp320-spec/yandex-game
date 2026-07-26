@@ -45,7 +45,7 @@ const HP_EXP = 0.8;
 const archDmg = (a: typeof ARCH[number]) =>
   (BALANCE.dmgConst * (a.spd / 1000) * (a.flavor ?? 1)) / (Math.pow(a.hp, HP_EXP) * BALANCE.typeValue[a.type]);
 
-export interface UnitStats { hp: number; dmg: number; spd: number; type: AttackType }
+export interface UnitStats { hp: number; dmg: number; spd: number; type: AttackType; chain: number }
 
 /**
  * Балансовые коэффициенты боя. Меняются калибровкой `npm run sim`, которая
@@ -73,6 +73,32 @@ export const BALANCE = {
   // бой наоборот затягивался (сплэш почти не убивал). 0.7 — компромисс: убийство за
   // 2–3 залпа, бой ≈20–25 секунд, разница в силе влияет плавнее.
   dmgConst: 0.7,
+  /**
+   * Масштаб периода атаки. Ниже 1 — удары чаще и слабее при том же DPS (dmgConst
+   * масштабируется вместе с ним), то есть на убийство уходит больше ударов. Это
+   * сглаживает исход: при 2–3 залпах на смерть бой решал целочисленный порог
+   * «хватило залпа или нет», и цепочки с разницей в 7% DPS давали 5% и 93% побед.
+   */
+  spdScale: 1,
+  /**
+   * Поправка силы КОНКРЕТНОЙ цепочки в оценке для матчмейкинга (не в характеристиках).
+   *
+   * Выровнять цепочки по фактическому winrate невозможно: в бою 5×5 действует
+   * снежный ком — убил бойца, урон врага упал на 20%, убиваешь следующего быстрее.
+   * Поэтому даже цепочки с одинаковой расчётной силой расходятся в дуэлях на десятки
+   * процентов, и это свойство формата, а не ошибка чисел (проверено: учащение ударов
+   * втрое разброс не уменьшило).
+   *
+   * Вместо выравнивания цепочки честно оцениваются: слабый состав получает меньший
+   * рейтинг, значит и соперников послабее, и на своём плато выигрывает те же ~47%.
+   *
+   * Значения найдены бисекцией в `npm run sim` (блок КАЛИБРОВКА ЦЕПОЧЕК): для каждой
+   * цепочки ищется множитель силы, при котором её моно-состав играет вровень с
+   * эталонной. Разброс оказался всего 0.94–1.18 — цепочки почти равны, а «разброс
+   * winrate в 90 п.п.», который раньше выглядел катастрофой, целиком объясняется
+   * снежным комом. Отклонение 1.18 у секретной «67» — сознательная награда.
+   */
+  chainValue: [1, 0.96, 0.97, 0.94, 1, 1, 1.07, 1, 1.18, 1.02, 1.05, 1.02] as number[],
   // Найдено бисекцией (npm run sim): при этих значениях моно-состав каждого типа
   // играет с эталонным снайперским вровень (50%).
   typeValue: { melee: 1.11, sniper: 1, splash: 1.48 } as Record<AttackType, number>,
@@ -95,9 +121,10 @@ export function unitStats(chain: number, level: number, upgraded = true): UnitSt
   const up = upgraded ? S.upgrades : { atk: 0, hp: 0 };
   return {
     hp: Math.round(48 * a.hp * Math.pow(1.85, level) * (1 + 0.05 * up.hp)),
-    dmg: Math.round(9 * archDmg(a) * Math.pow(1.7, level) * (1 + 0.05 * up.atk)),
-    spd: a.spd,
+    dmg: Math.round(9 * archDmg(a) * BALANCE.spdScale * Math.pow(1.7, level) * (1 + 0.05 * up.atk)),
+    spd: Math.round(a.spd * BALANCE.spdScale),
     type: a.type,
+    chain,
   };
 }
 
@@ -111,7 +138,8 @@ export function unitStats(chain: number, level: number, upgraded = true): UnitSt
  * Делим на 100, чтобы «сила команды» в интерфейсе осталась читаемым числом.
  */
 export const unitPower = (s: UnitStats) =>
-  (Math.pow(s.hp, HP_EXP) * s.dmg * (1000 / s.spd) * BALANCE.typeValue[s.type]) / 10;
+  (Math.pow(s.hp, HP_EXP) * s.dmg * (1000 / s.spd) * BALANCE.typeValue[s.type]
+    * (BALANCE.chainValue[s.chain % BALANCE.chainValue.length] ?? 1)) / 10;
 
 export const teamPower = (team: number[][], upgraded = true) =>
   team.reduce((sum, [ch, lv]) => sum + unitPower(unitStats(ch, lv, upgraded)), 0);
@@ -136,11 +164,13 @@ export interface EnemyTeam { name: string; cups: number; team: number[][]; facto
  */
 export function makeEnemy(): EnemyTeam {
   const basePower = Math.max(100, teamPower(S.team, false));
-  // Стартовая сложность и наклон подобраны прогонами sim: 0.85 даёт уверенные, но не
-  // поголовные победы в первых боях, а плато без прокачки приходится на ~700🏆 (первый
-  // милстоун — 100🏆); прокачанная казарма выводит за последний милстоун (2500🏆).
-  // Система крайне чувствительна: 0.75 давало 100% побед на старте, 1.0 — уже 39%.
-  const difficulty = 0.85 + Math.min(5, S.cups / 2500);
+  // Стартовая сложность и наклон подобраны свипами в sim: при 0.8 новичок выигрывает
+  // ~86% первых боёв, плато без прокачки — ~215🏆 (первый милстоун 100🏆 пройден), а
+  // прокачанная казарма выводит за последний милстоун (2500🏆).
+  // ОСТОРОЖНО: система крайне чувствительна из-за снежного кома в бою — 0.75 даёт 96%
+  // побед на старте, 0.85 уже 67%, а плато падает с 216🏆 до 15🏆. Менять только со
+  // свипом `npm run sim`, не «на глаз».
+  const difficulty = 0.8 + Math.min(5, S.cups / 2500);
   const target = basePower * difficulty * (0.85 + Math.random() * 0.3);
   const perUnit = target / 5;
   const team: number[][] = [];
