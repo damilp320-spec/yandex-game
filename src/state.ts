@@ -43,6 +43,12 @@ export const S = {
   // пользовательский контент и «Битва недели»
   customNames: {} as Record<number, string>, // свои имена легендарок по цепочкам
   battle: { week: '', side: -1, points: 0 },
+  // арена: бойцы сняты с поля и НЕ приносят доход
+  team: [] as number[][], // [chain, level], максимум 5
+  cups: 0,
+  wins: 0,
+  upgrades: { atk: 0, hp: 0 }, // казарма — бесконечный монетный синк
+  arenaClaimed: [] as boolean[],
   ftueDone: false,
   score: 0,
   ordersDone: 0,

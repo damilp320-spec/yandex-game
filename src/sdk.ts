@@ -72,10 +72,19 @@ export async function restorePurchases(): Promise<string[]> {
   catch { return []; }
 }
 
-export function setLeaderboardScore(score: number): void {
+export function submitScore(board: string, score: number): void {
   ysdk?.getLeaderboards?.()
-    .then((lb: any) => lb.setLeaderboardScore('weekly_merges', score))
+    .then((lb: any) => lb.setLeaderboardScore(board, score))
     .catch(() => {});
+}
+
+/** Топ лидерборда (+позиция игрока). Пусто — если SDK недоступен (dev-мок рисуется в UI). */
+export async function getLeaderboardTop(board: string): Promise<{ rank: number; name: string; score: number }[]> {
+  try {
+    const lb = await ysdk.getLeaderboards();
+    const res = await lb.getLeaderboardEntries(board, { quantityTop: 10, includeUser: true });
+    return res.entries.map((e: any) => ({ rank: e.rank, name: e.player?.publicName || 'Игрок', score: e.score }));
+  } catch { return []; }
 }
 
 /** Сохранение: облако + localStorage, не чаще раза в 5 сек. */

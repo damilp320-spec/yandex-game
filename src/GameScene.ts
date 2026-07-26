@@ -3,12 +3,14 @@ import { W, H, GRID, INCOME, SPAWN, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PR
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
+import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, EnemyTeam } from './arena';
+import { startBattle } from './battle';
 import { track } from './analytics';
 import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
 import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene } from './audio';
-import { openShop, ShopApi } from './shop';
+import { openShop, rollChest, ShopApi } from './shop';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
 interface Order { chain: number; level: number; text: Phaser.GameObjects.Text }
@@ -92,7 +94,7 @@ export class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: INCOME.periodMs, loop: true, callback: () => this.incomeTick() });
     this.time.addEvent({ delay: GOLDEN.intervalMs, loop: true, callback: () => this.spawnGolden() });
     this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tickGenerators() });
-    this.time.addEvent({ delay: 10_000, loop: true, callback: () => { this.persistBoard(); sdk.setLeaderboardScore(S.score); } });
+    this.time.addEvent({ delay: 10_000, loop: true, callback: () => { this.persistBoard(); sdk.submitScore('weekly_merges', S.score); } });
   }
 
   // ---------- пассивный доход и кликер ----------
@@ -372,10 +374,11 @@ export class GameScene extends Phaser.Scene {
     this.gemsText = ui.pill(this, 264, 88, 170, '💎', 0xc9a6ff);
     this.incomeText = ui.pill(this, 454, 88, 242, '💰', 0x7fdc8f);
 
-    ui.button(this, 140, 1132, 200, 56, '💎 Магазин', 0x8f5ad0, () => openShop(this, this.api), 22);
-    ui.button(this, 360, 1132, 200, 56, '📋 Задания', 0x2e6d9d, () => this.questsPanel(), 22);
-    this.questBadge = this.add.circle(450, 1108, 10, 0xff5050).setDepth(1);
-    ui.button(this, 580, 1132, 200, 56, '📖 Мемпедия', 0x5a48a8, () => this.memePanel(), 22);
+    ui.button(this, 105, 1132, 170, 56, '💎 Магазин', 0x8f5ad0, () => openShop(this, this.api), 18);
+    ui.button(this, 285, 1132, 170, 56, '📋 Задания', 0x2e6d9d, () => this.questsPanel(), 18);
+    this.questBadge = this.add.circle(362, 1108, 9, 0xff5050).setDepth(1);
+    ui.button(this, 465, 1132, 170, 56, '📖 Мемпедия', 0x5a48a8, () => this.memePanel(), 18);
+    ui.button(this, 645, 1132, 170, 56, '🏆 Арена', 0x9d5a2e, () => this.arenaPanel(), 18);
 
     const spawnBtn = ui.button(this, 200, 1210, 360, 64, '', 0x5a48a8, () => this.trySpawn());
     this.spawnLabel = spawnBtn.list[1] as Phaser.GameObjects.Text; // [graphics, text, hit]
@@ -604,6 +607,143 @@ export class GameScene extends Phaser.Scene {
           this.addTo(p, this.add.text(x, y, '?', { fontFamily: FONT, fontSize: '24px', color: '#5a5474', fontStyle: '700' }).setOrigin(0.5));
         }
       });
+    });
+  }
+
+  // ---------- Арена: команда 5 бойцов, кубки, казарма, лидерборд ----------
+  private arenaPanel() {
+    while (S.arenaClaimed.length < ARENA_MILESTONES.length) S.arenaClaimed.push(false);
+    const p = ui.panel(this, `🏆 Арена · ${S.cups} кубков`);
+    // слоты команды: боец снят с поля и НЕ приносит доход
+    this.addTo(p, this.add.text(W / 2, H / 2 - 372, 'Команда (бойцы не приносят доход на поле):', { fontFamily: FONT, fontSize: '20px', color: '#c9beee' }).setOrigin(0.5));
+    for (let i = 0; i < 5; i++) {
+      const x = W / 2 - 240 + i * 120, y = H / 2 - 290;
+      const box = this.add.rectangle(x, y, 106, 106, 0x161028, 0.9).setStrokeStyle(2, 0x8f7bd8).setInteractive();
+      this.addTo(p, box);
+      const member = S.team[i];
+      if (member) {
+        const st = unitStats(member[0], member[1]);
+        this.addTo(p, this.add.image(x, y, textureKey(member[0], member[1])).setDisplaySize(96, 96));
+        this.addTo(p, this.add.text(x, y + 66, `⚔${st.dmg} ❤${st.hp}`, { fontFamily: FONT, fontSize: '15px', color: '#c9beee' }).setOrigin(0.5));
+        box.on('pointerdown', () => this.removeFromTeam(i, p));
+      } else {
+        this.addTo(p, this.add.text(x, y, '+', { fontFamily: FONT, fontSize: '44px', color: '#5a5474' }).setOrigin(0.5));
+        box.on('pointerdown', () => { p.destroy(); this.teamPicker(); });
+      }
+    }
+    this.addTo(p, this.add.text(W / 2, H / 2 - 200, `Сила команды: ${Math.round(teamPower(S.team))}`, { fontFamily: FONT, fontSize: '23px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 130, 420, 78, '⚔️ В БОЙ!', 0x9d2e4d, () => {
+      if (!S.team.length) { failSound(); ui.toast(this, W / 2, H / 2 - 130, 'Сначала добавь бойцов!', '#ff7070'); return; }
+      p.destroy();
+      this.startArenaBattle(1);
+    }, 30));
+    // казарма — бесконечный синк монет (+5% к статам за уровень)
+    (['atk', 'hp'] as const).forEach((k, i) => {
+      const cost = upgradeCost(S.upgrades[k]);
+      this.addTo(p, ui.button(this, W / 2 - 150 + i * 300, H / 2 - 40, 280, 64,
+        `${k === 'atk' ? '⚔ Атака' : '❤ Броня'} ур.${S.upgrades[k]}\n${cost}🪙`, 0x2e6d9d, () => {
+          if (S.coins < cost) { failSound(); ui.toast(this, W / 2, H / 2 - 40, 'Не хватает монет', '#ff7070'); return; }
+          S.coins -= cost; S.upgrades[k]++;
+          coinSound(); track('barracks_upgrade', { stat: k });
+          this.refreshHud(); persist(); p.destroy(); this.arenaPanel();
+        }, 19));
+    });
+    // милстоуны кубков
+    ARENA_MILESTONES.forEach((m, i) => {
+      const y = H / 2 + 40 + i * 52;
+      const rw = m.coins ? `${m.coins}🪙` : `${m.gems}💎`;
+      this.addTo(p, this.add.text(W / 2 - 280, y, `${m.cups}🏆 — ${rw}`, { fontFamily: FONT, fontSize: '21px', color: S.cups >= m.cups ? '#fff' : '#5a5474' }).setOrigin(0, 0.5));
+      if (S.arenaClaimed[i]) this.addTo(p, this.add.text(W / 2 + 230, y, '✅', { fontSize: '26px' }).setOrigin(0.5));
+      else if (S.cups >= m.cups)
+        this.addTo(p, ui.button(this, W / 2 + 220, y, 150, 44, 'Забрать', 0x2e7d5b, () => {
+          S.arenaClaimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
+          tada(); this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
+        }, 17));
+    });
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 330, 340, 52, '🏅 Топ игроков', 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 19));
+  }
+
+  /** Пикер бойца: существо переезжает с поля в команду (клетка освобождается). */
+  private teamPicker() {
+    const p = ui.panel(this, '➕ Выбери бойца с поля', () => this.arenaPanel());
+    const items: { item: Item; r: number; c: number }[] = [];
+    for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) {
+      const it = this.grid[r][c]; if (it) items.push({ item: it, r, c });
+    }
+    if (!items.length)
+      this.addTo(p, this.add.text(W / 2, H / 2, 'На поле пусто!\nКупи существ и возвращайся.', { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    items.slice(0, 24).forEach((e, i) => {
+      const x = W / 2 - 225 + (i % 4) * 150, y = H / 2 - 300 + Math.floor(i / 4) * 120;
+      const st = unitStats(e.item.chain, e.item.level);
+      const img = this.add.image(x, y, textureKey(e.item.chain, e.item.level)).setDisplaySize(92, 92).setInteractive();
+      img.on('pointerdown', () => {
+        if (S.team.length >= 5) return;
+        S.team.push([e.item.chain, e.item.level]);
+        e.item.obj.destroy();
+        this.grid[e.r][e.c] = null;
+        jingleFanfare(); track('team_add');
+        this.persistBoard(true); this.refreshHud();
+        p.destroy(); this.arenaPanel();
+      });
+      this.addTo(p, img);
+      this.addTo(p, this.add.text(x, y + 56, `⚔${st.dmg} ❤${st.hp}`, { fontFamily: FONT, fontSize: '14px', color: '#c9beee' }).setOrigin(0.5));
+    });
+  }
+
+  private removeFromTeam(i: number, panel: Phaser.GameObjects.Container) {
+    const cell = this.findEmpty();
+    if (!cell) { failSound(); ui.toast(this, W / 2, H / 2 - 290, 'На поле нет места!', '#ff7070'); return; }
+    const [ch, lv] = S.team[i];
+    S.team.splice(i, 1);
+    this.spawnItem(ch, lv, ...cell);
+    this.persistBoard(true); this.refreshHud();
+    panel.destroy(); this.arenaPanel();
+  }
+
+  private startArenaBattle(playerFactor: number, rematch?: EnemyTeam) {
+    const en = rematch ?? makeEnemy();
+    track('arena_battle');
+    sdk.gameplayStart();
+    startBattle(this, S.team, playerFactor, en.team, en.factor, `${en.name} (${en.cups}🏆)`, win => this.battleResult(win, en));
+  }
+
+  private battleResult(win: boolean, en: EnemyTeam) {
+    const enemyPower = teamPower(en.team, false) * en.factor;
+    const d = cupsDelta(win, enemyPower);
+    S.cups = Math.max(0, S.cups + d);
+    let coins = 0;
+    if (win) { S.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
+    sdk.submitScore('cups', S.cups);
+    track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
+    persist(true); this.refreshHud();
+    const p = ui.panel(this, win ? '🎉 ПОБЕДА!' : '💀 Поражение…');
+    this.addTo(p, this.add.text(W / 2, H / 2 - 220,
+      win ? `${d >= 0 ? '+' : ''}${d}🏆  ·  +${coins}🪙${S.wins % 3 === 0 ? '\n\n🎁 Каждая 3-я победа — сундук!' : ''}`
+        : `${d}🏆\n\nПодкачай команду в казарме\nили слей существ повыше уровнем.`,
+      { fontFamily: FONT, fontSize: '30px', color: '#fff', align: 'center', fontStyle: '700' }).setOrigin(0.5));
+    if (win && S.wins % 3 === 0) rollChest(this.api, this, W / 2, H / 2 - 100);
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 380, 72, '⚔️ Ещё бой!', 0x9d2e4d, () => { p.destroy(); this.startArenaBattle(1); }, 24));
+    if (!win)
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 460, 66, '🎬 Реванш с бустом ×1.2', 0x2e7d5b, () =>
+        sdk.showRewarded(() => { p.destroy(); this.startArenaBattle(1.2, en); }), 21));
+    if (S.ordersDone > 0 && interstitialAllowed()) sdk.maybeInterstitial(); // естественный стык
+  }
+
+  private async leaderboardPanel() {
+    const p = ui.panel(this, '🏅 Топ по кубкам', () => this.arenaPanel());
+    let rows = await sdk.getLeaderboardTop('cups');
+    if (!rows.length) { // dev-мок: правдоподобный топ вокруг игрока
+      rows = ['Скуф67', 'НагибаторТоля', 'КапибараЛюб', 'xX_БравлеР_Xx', 'сигма-с-урока', 'ПростоДаня', 'Тимофей TV', 'Абобус228', 'ЛещДесантный']
+        .map((name, i) => ({ rank: i + 1, name, score: Math.max(10, S.cups + (5 - i) * 47) }));
+      rows.push({ rank: rows.length + 1, name: 'Ты', score: S.cups });
+      rows.sort((a, b) => b.score - a.score).forEach((r, i) => (r.rank = i + 1));
+    }
+    rows.slice(0, 10).forEach((r, i) => {
+      const y = H / 2 - 330 + i * 66;
+      const me = r.name === 'Ты';
+      const medal = r.rank <= 3 ? ['🥇', '🥈', '🥉'][r.rank - 1] : ` ${r.rank}.`;
+      this.addTo(p, this.add.text(W / 2 - 280, y, `${medal} ${r.name}`, { fontFamily: FONT, fontSize: '24px', color: me ? '#ffe066' : '#fff', fontStyle: me ? '800' : '400' }).setOrigin(0, 0.5));
+      this.addTo(p, this.add.text(W / 2 + 280, y, `${r.score}🏆`, { fontFamily: FONT, fontSize: '24px', color: '#c9beee' }).setOrigin(1, 0.5));
     });
   }
 
