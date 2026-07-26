@@ -8,6 +8,7 @@ import { textureKey } from './sprites';
 import { unitStats, AttackType } from './arena';
 import { jingleFanfare, failSound, clickSound } from './audio';
 import { button } from './ui';
+import { t } from './i18n';
 
 interface Fighter {
   chain: number; level: number;
@@ -24,7 +25,7 @@ export function startBattle(
 ) {
   const root = scene.add.container(0, 0).setDepth(70);
   root.add(scene.add.rectangle(W / 2, H / 2, W, H, 0x08050f, 0.94).setInteractive());
-  root.add(scene.add.text(W / 2, 60, `⚔️ Ты  VS  ${enemyName}`, { fontFamily: FONT, fontSize: '32px', color: '#ffe066', fontStyle: '800' }).setOrigin(0.5));
+  root.add(scene.add.text(W / 2, 60, t('battle.vs', { name: enemyName }), { fontFamily: FONT, fontSize: '32px', color: '#ffe066', fontStyle: '800' }).setOrigin(0.5));
 
   const fighters: Fighter[] = [];
   const mkFighter = (ch: number, lv: number, side: 0 | 1, i: number, factor: number) => {
@@ -101,7 +102,7 @@ export function startBattle(
   });
 
   let speed = 1;
-  root.add(button(scene, W / 2, H - 70, 220, 58, '▶ ×2', 0x5a48a8, () => {
+  root.add(button(scene, W / 2, H - 70, 220, 58, t('battle.speed'), 0x5a48a8, () => {
     speed = speed === 1 ? 2 : 1;
     scene.time.timeScale = speed;
     scene.tweens.timeScale = speed;

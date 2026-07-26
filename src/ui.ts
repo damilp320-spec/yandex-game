@@ -2,6 +2,7 @@
 // нажатия, модалки с шапкой, «пилюли» ресурсов — как в топовых мобильных казуалках.
 import Phaser from 'phaser';
 import { W, H, FONT } from './config';
+import { t } from './i18n';
 
 function shade(color: number, f: number): number {
   const ch = (n: number) => Math.min(255, Math.round(n * f));
@@ -44,7 +45,7 @@ export function panel(s: Phaser.Scene, title: string, onClose?: () => void): Pha
   const xBtn = s.add.text(W / 2 + 296, H / 2 - 421, '✕', { fontFamily: FONT, fontSize: '34px', color: '#c9beee', fontStyle: '700' })
     .setOrigin(0.5).setInteractive();
   xBtn.on('pointerdown', close);
-  root.add([dim, g, tt, xBtn, button(s, W / 2, H / 2 + 400, 300, 62, 'Закрыть', 0x5a48a8, close)]);
+  root.add([dim, g, tt, xBtn, button(s, W / 2, H / 2 + 400, 300, 62, t('common.close'), 0x5a48a8, close)]);
   return root;
 }
 

@@ -7,6 +7,9 @@ export const METRICA_ID = 0;
 
 export const FONT = 'Rubik, "Segoe UI", Arial, sans-serif';
 
+// Версия для панели настроек (помогает в поддержке: игрок может назвать её в отзыве).
+export const VERSION = '1.0';
+
 // Секретный «67»: шанс из сундука. 6,7% — сам шанс является мемом.
 export const SECRET_CHANCE = 0.067;
 export const SECRET_CHAIN = 8; // индекс цепочки sixseven в CHAINS
@@ -66,18 +69,16 @@ export const incomeOf = (chain: number, level: number) =>
   Math.ceil((1 + chain * 0.35) * Math.pow(INCOME.levelMult, level) * (chain === SECRET_CHAIN ? 6.7 : 1));
 
 // Локации: свои цепочки, свой тематический фон. Переключение — через карту.
-export interface Zone { id: string; title: string; bg: string; chains: number[]; unlockCoins: number; unlockGems: number }
+// Название локации — в i18n по ключу `zone.<id>`.
+export interface Zone { id: string; bg: string; chains: number[]; unlockCoins: number; unlockGems: number }
 export const ZONES: Zone[] = [
-  { id: 'lab', title: 'Лаборатория', bg: '#1a1230', chains: [0, 1, 2, 3], unlockCoins: 0, unlockGems: 0 },
-  { id: 'club', title: 'Неон-Клуб', bg: '#0d1a2e', chains: [4, 5, 6], unlockCoins: 10000, unlockGems: 200 },
-  { id: 'watch', title: 'Ночной Дозор', bg: '#201414', chains: [7, 8], unlockCoins: 50000, unlockGems: 500 },
-  { id: 'space', title: 'Космо-База', bg: '#0a0e24', chains: [9, 10, 11], unlockCoins: 250000, unlockGems: 1500 },
+  { id: 'lab', bg: '#1a1230', chains: [0, 1, 2, 3], unlockCoins: 0, unlockGems: 0 },
+  { id: 'club', bg: '#0d1a2e', chains: [4, 5, 6], unlockCoins: 10000, unlockGems: 200 },
+  { id: 'watch', bg: '#201414', chains: [7, 8], unlockCoins: 50000, unlockGems: 500 },
+  { id: 'space', bg: '#0a0e24', chains: [9, 10, 11], unlockCoins: 250000, unlockGems: 1500 },
 ];
 
-export const RARITY = [
-  { name: 'обычный', color: '#9aa0b8' }, { name: 'обычный', color: '#9aa0b8' },
-  { name: 'редкий', color: '#5a8fd8' }, { name: 'редкий', color: '#5a8fd8' },
-  { name: 'эпический', color: '#b85ad0' }, { name: 'легендарный', color: '#ffe066' },
-];
+/** Цвет рамки/бейджа по уровню; название редкости — i18n.rarityName(). */
+export const RARITY = ['#9aa0b8', '#9aa0b8', '#5a8fd8', '#5a8fd8', '#b85ad0', '#ffe066'];
 
 export const ORDER_REWARD_BY_LEVEL = [0, 40, 120, 300, 750, 1800];

@@ -6,9 +6,25 @@
 // Файл merge.mp3 заменит синтезированный джингл слияния и т.д.
 // Имена: merge, order, discovery, fanfare, coin, fail, tada.
 let ctx: AudioContext | undefined;
+let master: GainNode | undefined;
+let userMuted = false; // выключатель в настройках
+let adMuted = false;   // приглушение на время рекламы (правило Яндекса)
+const muted = () => userMuted || adMuted;
 let soundScene: any = null; // Phaser.Scene с предзагруженными кастомными звуками
 
-export function registerSoundScene(scene: unknown) { soundScene = scene; }
+function applyMute() {
+  const m = muted();
+  if (master) master.gain.value = m ? 0 : 1;
+  try { if (soundScene) soundScene.sound.mute = m; } catch { /* нет звукового движка */ }
+}
+
+export function registerSoundScene(scene: unknown) { soundScene = scene; applyMute(); }
+
+/** Выключатель звука из настроек игрока. */
+export function setMuted(on: boolean) { userMuted = on; applyMute(); }
+export const isMuted = () => userMuted;
+/** Тишина на время показа рекламы; снимается по onClose/onError. */
+export function setAdMute(on: boolean) { adMuted = on; applyMute(); }
 
 /** true — если проигран пользовательский файл вместо синтеза. */
 function custom(name: string): boolean {
@@ -19,22 +35,24 @@ function custom(name: string): boolean {
 }
 
 function ac(): AudioContext | null {
+  if (muted()) return null;
   try {
     ctx ??= new AudioContext();
+    if (!master) { master = ctx.createGain(); master.gain.value = 1; master.connect(ctx.destination); }
     if (ctx.state === 'suspended') ctx.resume();
     return ctx;
   } catch { return null; }
 }
 
 function note(freq: number, at: number, dur: number, type: OscillatorType = 'triangle', vol = 0.13) {
-  const a = ac(); if (!a) return;
+  const a = ac(); if (!a || !master) return;
   const t = a.currentTime + at;
   const o = a.createOscillator(), g = a.createGain();
   o.type = type; o.frequency.value = freq;
   g.gain.setValueAtTime(0, t);
   g.gain.linearRampToValueAtTime(vol, t + 0.015);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(a.destination);
+  o.connect(g).connect(master);
   o.start(t); o.stop(t + dur + 0.05);
 }
 

@@ -3,6 +3,8 @@
 // частотные капы interstitial, троттлинг сохранений, покупки через Payments API.
 import { INTERSTITIAL } from './config';
 import { track } from './analytics';
+import { setAdMute } from './audio';
+import { t } from './i18n';
 
 type Dict = Record<string, unknown>;
 declare global { interface Window { YaGames?: { init(): Promise<any> } } }
@@ -29,16 +31,23 @@ export async function initSDK(): Promise<void> {
 export const gameplayStart = () => ysdk?.features?.GameplayAPI?.start();
 export const gameplayStop = () => ysdk?.features?.GameplayAPI?.stop();
 
+/** Язык интерфейса платформы ('ru', 'en', 'tr'…) — для автовыбора локали. */
+export const sdkLang = (): string | null => ysdk?.environment?.i18n?.lang ?? null;
+
+/** Пауза геймплея и тишина на время рекламы — требование модерации. */
+const adStart = () => { gameplayStop(); setAdMute(true); };
+const adEnd = () => { setAdMute(false); gameplayStart(); };
+
 /** Rewarded: onReward вызывается ТОЛЬКО по коллбеку onRewarded. */
 export function showRewarded(onReward: () => void, onClose?: () => void): void {
   track('ad_rewarded');
   if (!ysdk) { onReward(); onClose?.(); return; } // мок: сразу награда
-  gameplayStop();
+  adStart();
   ysdk.adv.showRewardedVideo({
     callbacks: {
       onRewarded: onReward,
-      onClose: () => { gameplayStart(); onClose?.(); },
-      onError: () => { gameplayStart(); onClose?.(); },
+      onClose: () => { adEnd(); onClose?.(); },
+      onError: () => { adEnd(); onClose?.(); },
     },
   });
 }
@@ -51,8 +60,8 @@ export function maybeInterstitial(): boolean {
   lastInterstitial = now;
   track('ad_interstitial');
   if (!ysdk) { console.log('[mock] interstitial'); return true; }
-  gameplayStop();
-  ysdk.adv.showFullscreenAdv({ callbacks: { onClose: gameplayStart, onError: gameplayStart } });
+  adStart();
+  ysdk.adv.showFullscreenAdv({ callbacks: { onClose: adEnd, onError: adEnd } });
   return true;
 }
 
@@ -83,7 +92,7 @@ export async function getLeaderboardTop(board: string): Promise<{ rank: number; 
   try {
     const lb = await ysdk.getLeaderboards();
     const res = await lb.getLeaderboardEntries(board, { quantityTop: 10, includeUser: true });
-    return res.entries.map((e: any) => ({ rank: e.rank, name: e.player?.publicName || 'Игрок', score: e.score }));
+    return res.entries.map((e: any) => ({ rank: e.rank, name: e.player?.publicName || t('arena.player'), score: e.score }));
   } catch { return []; }
 }
 

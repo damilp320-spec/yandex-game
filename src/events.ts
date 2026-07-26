@@ -2,21 +2,21 @@
 // Добавление нового события = новая запись здесь, без изменения кода.
 export interface EventMilestone { points: number; coins?: number; gems?: number; chest?: boolean }
 export interface EventDef {
-  id: string; title: string; emoji: string;
+  id: string; emoji: string; // название события — в i18n по ключу `event.<id>`
   from: string; to: string; // ISO-даты включительно
-  color: number; names: string[]; // событийная цепочка существ
+  color: number; names: string[]; // событийная цепочка существ (RU; латиница — в i18n)
   milestones: EventMilestone[];
 }
 
 export const EVENTS: EventDef[] = [
   {
-    id: 'beach26', title: 'Пляжный сезон', emoji: '🏖️', from: '2026-07-01', to: '2026-08-20',
+    id: 'beach26', emoji: '🏖️', from: '2026-07-01', to: '2026-08-20',
     color: 0xf2a33c,
     names: ['Песчинко', 'Ракушкино', 'Крабо-Диджей', 'Пальмандо Кокосини', 'Гранд Солнциссимо'],
     milestones: [{ points: 10, coins: 300 }, { points: 30, gems: 5 }, { points: 60, coins: 1500 }, { points: 100, gems: 15, chest: true }],
   },
   {
-    id: 'ny26', title: 'Новогодний движ', emoji: '🎄', from: '2026-12-15', to: '2027-01-10',
+    id: 'ny26', emoji: '🎄', from: '2026-12-15', to: '2027-01-10',
     color: 0x6fd8d8,
     names: ['Снежинко', 'Сугробино', 'Ёлко-Балерино', 'Дед-Морозандо', 'Гранд Салютиссимо'],
     milestones: [{ points: 10, coins: 300 }, { points: 30, gems: 5 }, { points: 60, coins: 1500 }, { points: 100, gems: 15, chest: true }],

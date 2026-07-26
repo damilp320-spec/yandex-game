@@ -1,13 +1,15 @@
 // Центральное состояние игры + сериализация. Единственный источник правды для сейва.
 import { CHAINS, ZONES } from './config';
 import * as sdk from './sdk';
+import { Lang, setLang } from './i18n';
 
-export interface QuestDef { id: 'merges' | 'orders' | 'spawns' | 'taps'; label: string; target: number; coins: number; gems: number }
+// Текст задания — в i18n по ключу `quest.<id>`.
+export interface QuestDef { id: 'merges' | 'orders' | 'spawns' | 'taps'; target: number; coins: number; gems: number }
 export const QUESTS: QuestDef[] = [
-  { id: 'merges', label: 'Слей существ', target: 20, coins: 400, gems: 2 },
-  { id: 'orders', label: 'Выполни заказы', target: 5, coins: 600, gems: 3 },
-  { id: 'spawns', label: 'Заведи существ', target: 12, coins: 300, gems: 1 },
-  { id: 'taps', label: 'Покликай существ', target: 60, coins: 500, gems: 2 },
+  { id: 'merges', target: 20, coins: 400, gems: 2 },
+  { id: 'orders', target: 5, coins: 600, gems: 3 },
+  { id: 'spawns', target: 12, coins: 300, gems: 1 },
+  { id: 'taps', target: 60, coins: 500, gems: 2 },
 ];
 
 // 7-дневный цикл ежедневного бонуса; day 7 — «жирный» (PLAN.md §3).
@@ -52,6 +54,11 @@ export const S = {
   ftueDone: false,
   score: 0,
   ordersDone: 0,
+  // настройки игрока
+  lang: '' as Lang | '',   // пусто = язык платформы/браузера
+  soundOn: true,
+  // подсказки FTUE 2.0: каждая показывается один раз
+  tips: { income: false, tap: false, arena: false },
 };
 
 export const today = () => new Date().toISOString().slice(0, 10);
@@ -76,6 +83,10 @@ function ensureShapes() {
   while (S.zoneUnlocked.length < ZONES.length) S.zoneUnlocked.push(false);
   while (S.quests.claimed.length < QUESTS.length) S.quests.claimed.push(false);
   QUESTS.forEach(q => { S.quests.progress[q.id] ??= 0; });
+  // старые сейвы: подсказки/настройки могли не существовать
+  const tips = (S.tips ?? {}) as Partial<typeof S.tips>;
+  S.tips = { income: !!tips.income, tap: !!tips.tap, arena: !!tips.arena };
+  S.soundOn ??= true;
   // Миграция старых сейвов: плоский items становится полем первой локации.
   const legacy = (S as any).items as number[][] | undefined;
   if (legacy?.length && !S.itemsZ.some(z => z.length)) S.itemsZ[0] = legacy;
@@ -98,7 +109,25 @@ export async function restore(): Promise<boolean> {
   if (d) Object.assign(S, d);
   ensureShapes();
   resetDailies();
+  if (S.lang) setLang(S.lang); // выбор игрока важнее языка платформы
   return !!d;
+}
+
+/** Полный сброс прогресса (настройки языка/звука сохраняем — это не прогресс). */
+export function resetProgress() {
+  const keep = { lang: S.lang, soundOn: S.soundOn };
+  localStorage.removeItem('save');
+  Object.assign(S, {
+    coins: 0, gems: 0, itemsZ: [[]], zone: 0, zoneUnlocked: [true], rowUnlocked: false,
+    streakDay: 0, streakLast: '', quests: { date: '', progress: { merges: 0, orders: 0, spawns: 0, taps: 0 }, claimed: [] },
+    discovered: [], genLast: [], freeChestLast: 0, event: { id: '', points: 0, claimed: [] },
+    spawnBought: 0, incomeRate: 0, boostUntil: 0, boostMult: 1, customNames: {},
+    battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, wins: 0,
+    upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, ordersDone: 0,
+    starterOffered: false, tips: { income: false, tap: false, arena: false }, ...keep,
+  });
+  ensureShapes();
+  persist(true);
 }
 
 export function persist(force = false) {

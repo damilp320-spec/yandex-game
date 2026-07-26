@@ -3,6 +3,7 @@
 // поэтому «оффлайн противника» не существует как проблема.
 import { CHAINS } from './config';
 import { S } from './state';
+import { nicks } from './i18n';
 
 export type AttackType = 'melee' | 'sniper' | 'splash';
 
@@ -50,13 +51,6 @@ export const ARENA_MILESTONES: { cups: number; coins?: number; gems?: number }[]
   { cups: 1000, coins: 20000 }, { cups: 1500, gems: 60 }, { cups: 2500, gems: 150 },
 ];
 
-const NICKS = [
-  'Кирилл_2013', 'xX_БравлеР_Xx', 'НагибаторТоля', 'мама сказала можно', 'Скуф67',
-  'ПростоДаня', 'КапибараЛюб', 'ЗубастикПро', 'aunt_walera', 'СЛИВКИ_ОБЩЕСТВА',
-  'Тимофей TV', 'девочка_вайб', 'КрутойПерец99', 'Их_Бин_Ту', 'сигма-с-урока',
-  'ЛещДесантный', 'Полиночка)', 'ГномГномыч', 'Абобус228', 'человек-роблокс',
-];
-
 export interface EnemyTeam { name: string; cups: number; team: number[][]; factor: number }
 
 /** Противник под силу игрока: ±15% силы, правдоподобный ник, кубки рядом. */
@@ -76,8 +70,9 @@ export function makeEnemy(): EnemyTeam {
   }
   // добиваем разницу скрытым множителем, чтобы бой был честным «почти вровень»
   const factor = Math.min(1.3, Math.max(0.75, target / Math.max(1, teamPower(team, false))));
+  const pool = nicks();
   return {
-    name: NICKS[Math.floor(Math.random() * NICKS.length)],
+    name: pool[Math.floor(Math.random() * pool.length)],
     cups: Math.max(0, S.cups + Math.floor(Math.random() * 61) - 30),
     team,
     factor,

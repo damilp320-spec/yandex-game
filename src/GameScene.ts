@@ -1,16 +1,17 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, SPAWN, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT } from './config';
+import { W, H, GRID, INCOME, SPAWN, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
 import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, EnemyTeam } from './arena';
 import { startBattle } from './battle';
 import { track } from './analytics';
-import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek } from './state';
+import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek, resetProgress } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
-import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene } from './audio';
+import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene, setMuted, isMuted } from './audio';
 import { openShop, rollChest, ShopApi } from './shop';
+import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } from './i18n';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
 interface Order { chain: number; level: number; text: Phaser.GameObjects.Text }
@@ -28,8 +29,10 @@ export class GameScene extends Phaser.Scene {
   private comboLast = 0;
   private golden?: Phaser.GameObjects.Image;
   private questBadge!: Phaser.GameObjects.Arc;
+  private arenaBtn!: Phaser.GameObjects.Container;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
+  private tipBanner?: Phaser.GameObjects.Text;
   private ev: EventDef | null = null;
   private evCfg?: Chain;
   private api: ShopApi = {
@@ -40,6 +43,9 @@ export class GameScene extends Phaser.Scene {
 
   /** Конфиг цепочки с учётом событийной (индекс за пределами CHAINS). */
   private chainCfg(i: number): Chain { return i === EVENT_CHAIN_INDEX && this.evCfg ? this.evCfg : CHAINS[i]; }
+
+  /** Локализованное имя существа. */
+  private cname(chain: number, level: number): string { return creatureName(this.chainCfg(chain), level); }
 
   constructor() { super('game'); }
 
@@ -54,6 +60,7 @@ export class GameScene extends Phaser.Scene {
     this.genEntries = [];
     const hadSave = await restore();
     this.drawZoneBg();
+    setMuted(!S.soundOn); // выбор игрока из сейва
     registerSoundScene(this);
     this.loadCustomSounds();
     for (const id of await sdk.restorePurchases()) {
@@ -80,6 +87,7 @@ export class GameScene extends Phaser.Scene {
       if (ch >= CHAINS.length && !this.evCfg) { S.coins += 100 * (lv + 1); return; }
       this.spawnItem(ch, lv, r, c, true);
     });
+    this.refreshHud(); // доход считаем сразу, а не через 5 с (первый тик) — иначе видно «+0»
 
     if (!GameScene.popupsShown) {
       GameScene.popupsShown = true;
@@ -143,7 +151,7 @@ export class GameScene extends Phaser.Scene {
       S.coins += reward;
       jingleFanfare();
       track('golden_tap');
-      ui.toast(this, img.x, img.y - 40, `✨ ЗОЛОТОЙ! +${reward}🪙`);
+      ui.toast(this, img.x, img.y - 40, t('golden.tap', { n: reward }));
       img.destroy();
       this.refreshHud(); persist();
     });
@@ -228,15 +236,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private unlockPanel() {
-    const p = ui.panel(this, '🔒 Седьмой ряд поля');
-    p.add(this.add.text(W / 2, H / 2 - 300, 'Больше места — больше существ\nи длиннее цепочки!', { fontSize: '28px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    const p = ui.panel(this, t('row.title'));
+    p.add(this.add.text(W / 2, H / 2 - 300, t('row.desc'), { fontSize: '28px', color: '#fff', align: 'center' }).setOrigin(0.5));
     const buy = (ok: boolean, spend: () => void) => {
-      if (!ok) { failSound(); ui.toast(this, W / 2, H / 2, 'Не хватает средств', '#ff7070'); return; }
+      if (!ok) { failSound(); ui.toast(this, W / 2, H / 2, t('common.notEnoughFunds'), '#ff7070'); return; }
       spend(); S.rowUnlocked = true; this.lockedOverlay?.destroy(); tada(); persist(true); p.destroy();
     };
-    p.add(ui.button(this, W / 2, H / 2 - 150, 420, 70, `Открыть за ${PRICES.rowCoins}🪙`, 0x5a48a8,
+    p.add(ui.button(this, W / 2, H / 2 - 150, 420, 70, t('row.buyCoins', { n: PRICES.rowCoins }), 0x5a48a8,
       () => buy(S.coins >= PRICES.rowCoins, () => { S.coins -= PRICES.rowCoins; this.refreshHud(); })));
-    p.add(ui.button(this, W / 2, H / 2 - 60, 420, 70, `Открыть за ${PRICES.rowGems}💎`, 0x8f5ad0,
+    p.add(ui.button(this, W / 2, H / 2 - 60, 420, 70, t('row.buyGems', { n: PRICES.rowGems }), 0x8f5ad0,
       () => buy(S.gems >= PRICES.rowGems, () => { S.gems -= PRICES.rowGems; this.refreshHud(); })));
   }
 
@@ -259,7 +267,7 @@ export class GameScene extends Phaser.Scene {
     const { x, y } = this.cellXY(r, c);
     const box = this.add.container(x, y);
     const img = this.add.image(0, 0, textureKey(chain, level)).setDisplaySize(114, 114);
-    const badge = this.add.text(42, 42, `${level + 1}`, { fontFamily: FONT, fontSize: '20px', color: RARITY[level].color, fontStyle: '800' }).setOrigin(0.5).setStroke('#1a1230', 4);
+    const badge = this.add.text(42, 42, `${level + 1}`, { fontFamily: FONT, fontSize: '20px', color: RARITY[level], fontStyle: '800' }).setOrigin(0.5).setStroke('#1a1230', 4);
     box.add([img, badge]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
     const item: Item = { chain, level, obj: box };
     this.grid[r][c] = item;
@@ -276,7 +284,7 @@ export class GameScene extends Phaser.Scene {
     const coins = 25 * (level + 1), gems = level >= 4 ? 5 : 0;
     S.coins += coins; S.gems += gems;
     jingleDiscovery();
-    ui.toast(this, W / 2, GRID.y + 80, `📖 Открыто: ${CHAINS[chain].names[level]}! +${coins}🪙${gems ? ` +${gems}💎` : ''}`);
+    ui.toast(this, W / 2, GRID.y + 80, t('pedia.discovered', { name: this.cname(chain, level), coins, gems: gems ? ` +${gems}💎` : '' }));
     this.refreshHud();
     if (chain === SECRET_CHAIN && level === 0) this.secret67Panel();
   }
@@ -323,9 +331,10 @@ export class GameScene extends Phaser.Scene {
     if (level === 5 && !S.customNames[a.chain]) this.renamePanel(a.chain); // легендарка заслуживает имени
     if (a.chain === EVENT_CHAIN_INDEX && this.ev) {
       S.event.points += level * 2;
-      ui.toast(this, W / 2, GRID.y + 140, `${this.ev.emoji} +${level * 2} очков события`);
+      ui.toast(this, W / 2, GRID.y + 140, t('event.points', { emoji: this.ev.emoji, n: level * 2 }));
     }
-    if (this.hint) { this.hint.destroy(); this.hint = undefined; ui.toast(this, W / 2, 180, 'Отлично! Теперь выполни заказ наверху 👆'); }
+    if (this.hint) { this.hint.destroy(); this.hint = undefined; ui.toast(this, W / 2, 180, t('ftue.afterMerge')); }
+    this.tipIncome();
     if (level >= 3) this.maybeStarterOffer();
     this.refreshHud();
     this.persistBoard();
@@ -346,9 +355,9 @@ export class GameScene extends Phaser.Scene {
 
   private tapGenerator(ch: number) {
     const left = GEN.cooldownMs - (Date.now() - S.genLast[ch]);
-    if (left > 0) { failSound(); ui.toast(this, W / 2, 260, `Ещё ${Math.ceil(left / 1000)} с`, '#ff7070'); return; }
+    if (left > 0) { failSound(); ui.toast(this, W / 2, 260, t('gen.wait', { n: Math.ceil(left / 1000) }), '#ff7070'); return; }
     const cell = this.findEmpty();
-    if (!cell) { failSound(); ui.toast(this, W / 2, 260, 'Поле заполнено!', '#ff7070'); return; }
+    if (!cell) { failSound(); ui.toast(this, W / 2, 260, t('common.boardFull'), '#ff7070'); return; }
     S.genLast[ch] = Date.now();
     this.spawnItem(ch, 0, ...cell);
     S.quests.progress.spawns++;
@@ -358,7 +367,7 @@ export class GameScene extends Phaser.Scene {
   private tickGenerators() {
     this.genEntries.forEach(({ chain, text }) => {
       const left = GEN.cooldownMs - (Date.now() - S.genLast[chain]);
-      text.setText(left > 0 ? `${Math.ceil(left / 1000)}с` : 'ГОТОВ').setColor(left > 0 ? '#8f86b8' : '#7fdcff');
+      text.setText(left > 0 ? `${Math.ceil(left / 1000)}${t('hud.sec')}` : t('gen.ready')).setColor(left > 0 ? '#8f86b8' : '#7fdcff');
     });
   }
 
@@ -366,32 +375,97 @@ export class GameScene extends Phaser.Scene {
   private drawHud() {
     this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontFamily: FONT, fontSize: '40px', color: '#ffe066', fontStyle: '900' })
       .setOrigin(0.5).setStroke('#120c22', 8).setShadow(0, 3, 'rgba(0,0,0,0.5)', 4);
+    ui.button(this, 682, 36, 62, 52, '⚙️', 0x3a3a55, () => this.settingsPanel(), 24);
     if (this.ev)
-      ui.button(this, 165, 134, 290, 44, `${this.ev.emoji} ${this.ev.title.split(' ')[0]} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 18);
-    ui.button(this, 445, 134, 250, 44, `🗺️ ${ZONES[S.zone].title}`, 0x2e6d9d, () => this.zonesPanel(), 18);
+      ui.button(this, 165, 134, 290, 44, `${this.ev.emoji} ${t(`event.${this.ev.id}`).split(' ')[0]} · ${daysLeft(this.ev)}${t('hud.day')}`, 0xa8542e, () => this.eventPanel(), 18);
+    ui.button(this, 445, 134, 250, 44, `🗺️ ${t(`zone.${ZONES[S.zone].id}`)}`, 0x2e6d9d, () => this.zonesPanel(), 18);
     ui.button(this, 635, 134, 110, 44, '⚔️', 0x9d2e4d, () => this.battlePanel(), 22);
     this.coinsText = ui.pill(this, 24, 88, 220, '🪙', 0xffe066);
     this.gemsText = ui.pill(this, 264, 88, 170, '💎', 0xc9a6ff);
     this.incomeText = ui.pill(this, 454, 88, 242, '💰', 0x7fdc8f);
 
-    ui.button(this, 105, 1132, 170, 56, '💎 Магазин', 0x8f5ad0, () => openShop(this, this.api), 18);
-    ui.button(this, 285, 1132, 170, 56, '📋 Задания', 0x2e6d9d, () => this.questsPanel(), 18);
+    ui.button(this, 105, 1132, 170, 56, t('hud.shop'), 0x8f5ad0, () => openShop(this, this.api), 18);
+    ui.button(this, 285, 1132, 170, 56, t('hud.quests'), 0x2e6d9d, () => this.questsPanel(), 18);
     this.questBadge = this.add.circle(362, 1108, 9, 0xff5050).setDepth(1);
-    ui.button(this, 465, 1132, 170, 56, '📖 Мемпедия', 0x5a48a8, () => this.memePanel(), 18);
-    ui.button(this, 645, 1132, 170, 56, '🏆 Арена', 0x9d5a2e, () => this.arenaPanel(), 18);
+    ui.button(this, 465, 1132, 170, 56, t('hud.pedia'), 0x5a48a8, () => this.memePanel(), 18);
+    this.arenaBtn = ui.button(this, 645, 1132, 170, 56, t('hud.arena'), 0x9d5a2e, () => this.arenaPanel(), 18);
 
     const spawnBtn = ui.button(this, 200, 1210, 360, 64, '', 0x5a48a8, () => this.trySpawn());
     this.spawnLabel = spawnBtn.list[1] as Phaser.GameObjects.Text; // [graphics, text, hit]
     // Rewarded-точка: игрок сам меняет ролик на буст дохода (PLAN.md §4).
-    ui.button(this, 555, 1210, 290, 64, `🎬 Доход ×${INCOME.boostAdMult} (2 мин)`, 0x2e7d5b, () =>
+    ui.button(this, 555, 1210, 290, 64, t('hud.incomeAd', { mult: INCOME.boostAdMult }), 0x2e7d5b, () =>
       sdk.showRewarded(() => {
         // если активен более сильный буст — реклама продлевает его, а не понижает
         S.boostMult = Date.now() < S.boostUntil ? Math.max(S.boostMult, INCOME.boostAdMult) : INCOME.boostAdMult;
         S.boostUntil = Date.now() + INCOME.boostAdMs;
         this.refreshHud(); persist();
-        ui.toast(this, 555, 1160, `Доход ×${S.boostMult}!`, '#7fdc8f');
+        ui.toast(this, 555, 1160, t('hud.boostOn', { mult: S.boostMult }), '#7fdc8f');
       }), 21);
     this.refreshHud();
+  }
+
+  // ---------- настройки: звук (важно для модерации), язык, сброс ----------
+  private settingsPanel() {
+    const p = ui.panel(this, t('set.title'));
+    const soundBtn = ui.button(this, W / 2, H / 2 - 300, 480, 72,
+      isMuted() ? t('set.soundOff') : t('set.soundOn'), isMuted() ? 0x3a3a55 : 0x2e7d5b, () => {
+        const on = !isMuted();
+        setMuted(on); S.soundOn = !on; persist(true);
+        (soundBtn.list[1] as Phaser.GameObjects.Text).setText(on ? t('set.soundOff') : t('set.soundOn'));
+        if (!on) coinSound();
+      }, 26);
+    this.addTo(p, soundBtn);
+    this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('set.lang'), { fontFamily: FONT, fontSize: '26px', color: '#c9beee' }).setOrigin(0.5));
+    LANGS.forEach((l, i) => {
+      const cur = getLang() === l.code;
+      this.addTo(p, ui.button(this, W / 2 - 200 + i * 200, H / 2 - 130, 180, 64, l.label, cur ? 0x2e7d5b : 0x5a48a8, () => {
+        if (cur) return;
+        S.lang = l.code as Lang; setLang(l.code); persist(true);
+        track('lang_switch', { lang: l.code });
+        this.scene.restart(); // перерисовать всю сцену на новом языке
+      }, 22));
+    });
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 120, 480, 68, t('set.reset'), 0x9d2e4d, () => {
+      const c = ui.panel(this, t('set.reset'));
+      this.addTo(c, this.add.text(W / 2, H / 2 - 120, t('set.resetAsk'), { fontFamily: FONT, fontSize: '28px', color: '#fff', align: 'center' }).setOrigin(0.5));
+      this.addTo(c, ui.button(this, W / 2, H / 2 + 20, 460, 74, t('set.resetYes'), 0x9d2e4d, () => {
+        resetProgress(); track('progress_reset'); this.scene.restart();
+      }, 24));
+    }, 24));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 250, `${t('set.version', { v: VERSION })}\n${t('set.credits')}`,
+      { fontFamily: FONT, fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+  }
+
+  // ---------- FTUE 2.0: по одной подсказке на механику, каждая один раз ----------
+  /** Баннер в свободной зоне + пульс целевого элемента (стрелки не нужны — глаз ловит движение). */
+  private tip(key: string, target?: Phaser.GameObjects.GameObject) {
+    this.tipBanner?.destroy();
+    const b = this.add.text(W / 2, 1072, t(key), {
+      fontFamily: FONT, fontSize: '23px', color: '#ffe066', backgroundColor: '#2a1f4d',
+      padding: { x: 14, y: 10 }, align: 'center', wordWrap: { width: 640 },
+    }).setOrigin(0.5).setDepth(20);
+    this.tipBanner = b;
+    this.tweens.add({ targets: b, alpha: 0.5, yoyo: true, repeat: 5, duration: 520 });
+    if (target) this.tweens.add({ targets: target, scale: 1.15, yoyo: true, repeat: 5, duration: 520 });
+    this.time.delayedCall(6200, () => { if (this.tipBanner === b) this.tipBanner = undefined; b.destroy(); });
+  }
+
+  private tipIncome() {
+    if (S.tips.income) return;
+    S.tips.income = true; persist();
+    this.tip('ftue.income', this.incomeText);
+  }
+
+  /** Триггеры подсказок проверяем в refreshHud — он вызывается на каждое изменение. */
+  private checkTips() {
+    if (!S.tips.tap && S.tips.income && S.coins >= 30) {
+      const any = this.grid.flat().find(Boolean);
+      if (any) { S.tips.tap = true; persist(); this.tip('ftue.tap', any.obj); }
+    }
+    if (!S.tips.arena && (S.coins >= 500 || S.discovered.some(ch => ch[5]))) {
+      S.tips.arena = true; persist();
+      this.tip('ftue.arena', this.arenaBtn);
+    }
   }
 
   private spawnCost(): number { return Math.floor(SPAWN.baseCost * Math.pow(SPAWN.growth, S.spawnBought)); }
@@ -400,17 +474,18 @@ export class GameScene extends Phaser.Scene {
     this.coinsText.setText(`${S.coins}`);
     this.gemsText.setText(`${S.gems}`);
     const boost = Date.now() < S.boostUntil ? ` ×${S.boostMult}` : '';
-    this.incomeText.setText(`+${this.totalIncome()}/5с${boost}`);
-    this.spawnLabel?.setText(`Существо (${this.spawnCost()}🪙)`);
+    this.incomeText.setText(`+${this.totalIncome()}/5${t('hud.sec')}${boost}`);
+    this.spawnLabel?.setText(t('hud.creature', { cost: this.spawnCost() }));
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
+    this.checkTips();
   }
 
   private trySpawn() {
     const cost = this.spawnCost();
-    if (S.coins < cost) { failSound(); ui.toast(this, W / 2, 1160, 'Не хватает монет!', '#ff7070'); return; }
+    if (S.coins < cost) { failSound(); ui.toast(this, W / 2, 1160, t('common.notEnoughCoins'), '#ff7070'); return; }
     const cell = this.findEmpty();
-    if (!cell) { failSound(); ui.toast(this, W / 2, 1160, 'Поле заполнено!', '#ff7070'); return; }
+    if (!cell) { failSound(); ui.toast(this, W / 2, 1160, t('common.boardFull'), '#ff7070'); return; }
     S.coins -= cost;
     S.spawnBought++;
     // Во время события 25% новых существ — событийные; остальные — из цепочек локации.
@@ -447,7 +522,7 @@ export class GameScene extends Phaser.Scene {
     const level = Phaser.Math.Between(1, Math.min(4, maxLv + 1));
     const chain = Phaser.Math.RND.pick(pool) as number;
     this.orders[slot]?.text.destroy();
-    const text = this.add.text(130 + slot * 230, 200, `Ролик с:\n${CHAINS[chain].names[level]}\n🪙 ${ORDER_REWARD_BY_LEVEL[level]}`,
+    const text = this.add.text(130 + slot * 230, 200, t('order.label', { name: this.cname(chain, level), reward: ORDER_REWARD_BY_LEVEL[level] }),
       { fontSize: '21px', color: '#fff', backgroundColor: '#3d2f6e', padding: { x: 10, y: 8 }, align: 'center' })
       .setOrigin(0.5).setInteractive();
     text.on('pointerdown', () => this.deliver(slot));
@@ -473,12 +548,12 @@ export class GameScene extends Phaser.Scene {
       }
     }
     failSound();
-    ui.toast(this, o.text.x, o.text.y, 'Нет такого существа', '#ff7070');
+    ui.toast(this, o.text.x, o.text.y, t('order.missing'), '#ff7070');
   }
 
   // ---------- ежедневный бонус ----------
   private streakPanel(mode: 'claim' | 'lost', onDone: () => void) {
-    const p = ui.panel(this, '📅 Ежедневный бонус', onDone);
+    const p = ui.panel(this, t('streak.title'), onDone);
     const nextDay = mode === 'lost' ? 1 : (S.streakDay % 7) + 1;
     const savedDay = (S.streakDay % 7) + 1;
     STREAK_REWARDS.forEach((rw, i) => {
@@ -497,13 +572,13 @@ export class GameScene extends Phaser.Scene {
       this.refreshHud(); persist(true); p.destroy(); onDone();
     };
     if (mode === 'claim') {
-      this.addTo(p, ui.button(this, W / 2, H / 2, 420, 76, `Забрать бонус дня ${nextDay}!`, 0x2e7d5b, () => claim(nextDay)));
+      this.addTo(p, ui.button(this, W / 2, H / 2, 420, 76, t('streak.claimDay', { n: nextDay }), 0x2e7d5b, () => claim(nextDay)));
     } else {
       // Мягкий loss aversion: серию можно спасти рекламой — без реальной потери (PLAN.md §15).
-      this.addTo(p, this.add.text(W / 2, H / 2 - 120, `Серия из ${S.streakDay} дн. прервалась!`, { fontSize: '30px', color: '#ff9d70' }).setOrigin(0.5));
-      this.addTo(p, ui.button(this, W / 2, H / 2, 480, 76, '🎬 Спасти серию за рекламу', 0x2e7d5b,
+      this.addTo(p, this.add.text(W / 2, H / 2 - 120, t('streak.lost', { n: S.streakDay }), { fontSize: '30px', color: '#ff9d70' }).setOrigin(0.5));
+      this.addTo(p, ui.button(this, W / 2, H / 2, 480, 76, t('streak.save'), 0x2e7d5b,
         () => sdk.showRewarded(() => claim(savedDay))));
-      this.addTo(p, ui.button(this, W / 2, H / 2 + 100, 480, 64, 'Начать серию заново', 0x5a48a8, () => claim(1)));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 100, 480, 64, t('streak.restart'), 0x5a48a8, () => claim(1)));
     }
   }
 
@@ -511,36 +586,38 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- квесты ----------
   private questsPanel() {
-    const p = ui.panel(this, '📋 Задания дня');
+    const p = ui.panel(this, t('quests.title'));
     QUESTS.forEach((q, i) => {
       const y = H / 2 - 260 + i * 150;
       const prog = Math.min(S.quests.progress[q.id], q.target);
-      this.addTo(p, this.add.text(W / 2 - 290, y, `${q.label}\n${prog}/${q.target} · награда ${q.coins}🪙 +${q.gems}💎`, { fontSize: '26px', color: '#fff' }));
+      this.addTo(p, this.add.text(W / 2 - 290, y,
+        t('quests.line', { label: t(`quest.${q.id}`), prog, target: q.target, coins: q.coins, gems: q.gems }),
+        { fontSize: '26px', color: '#fff' }));
       if (S.quests.claimed[i])
         this.addTo(p, this.add.text(W / 2 + 210, y + 20, '✅', { fontSize: '40px' }).setOrigin(0.5));
       else if (prog >= q.target)
-        this.addTo(p, ui.button(this, W / 2 + 210, y + 24, 170, 60, 'Забрать', 0x2e7d5b, () => {
+        this.addTo(p, ui.button(this, W / 2 + 210, y + 24, 170, 60, t('common.claim'), 0x2e7d5b, () => {
           S.quests.claimed[i] = true; S.coins += q.coins; S.gems += q.gems;
           coinSound(); this.refreshHud(); persist(); p.destroy(); this.questsPanel();
         }));
     });
-    this.addTo(p, this.add.text(W / 2, H / 2 + 260, 'Новые задания — каждый день!', { fontSize: '24px', color: '#8f86b8' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 260, t('quests.footer'), { fontSize: '24px', color: '#8f86b8' }).setOrigin(0.5));
   }
 
   // ---------- локации ----------
   private zonesPanel() {
-    const p = ui.panel(this, '🗺️ Локации');
+    const p = ui.panel(this, t('zones.title'));
     ZONES.forEach((z, i) => {
       const y = H / 2 - 250 + i * 170;
-      const label = `${z.title}\n${z.chains.length} цепочки существ`;
+      const label = `${t(`zone.${z.id}`)}\n${t('zones.chains', { n: z.chains.length })}`;
       if (S.zoneUnlocked[i]) {
         this.addTo(p, ui.button(this, W / 2, y, 520, 120, i === S.zone ? `📍 ${label}` : label, i === S.zone ? 0x2e7d5b : 0x5a48a8,
           () => { if (i !== S.zone) this.switchZone(i); }));
       } else {
-        this.addTo(p, ui.button(this, W / 2, y, 520, 120, `🔒 ${label}\nОткрыть: ${z.unlockCoins}🪙 или ${z.unlockGems}💎`, 0x3a3a55, () => {
+        this.addTo(p, ui.button(this, W / 2, y, 520, 120, `🔒 ${label}\n${t('zones.unlock', { coins: z.unlockCoins, gems: z.unlockGems })}`, 0x3a3a55, () => {
           if (S.coins >= z.unlockCoins) S.coins -= z.unlockCoins;
           else if (S.gems >= z.unlockGems) S.gems -= z.unlockGems;
-          else { failSound(); ui.toast(this, W / 2, y, 'Не хватает средств', '#ff7070'); return; }
+          else { failSound(); ui.toast(this, W / 2, y, t('common.notEnoughFunds'), '#ff7070'); return; }
           S.zoneUnlocked[i] = true;
           // стартовые существа новой локации — чтобы было что сливать сразу
           S.itemsZ[i] = [[2, 2, z.chains[0], 0], [2, 3, z.chains[0], 0], [3, 2, z.chains[1] ?? z.chains[0], 0], [3, 3, z.chains[1] ?? z.chains[0], 0]];
@@ -562,47 +639,48 @@ export class GameScene extends Phaser.Scene {
   // ---------- сезонное событие ----------
   private eventPanel() {
     const ev = this.ev!;
-    const p = ui.panel(this, `${ev.emoji} ${ev.title}`);
+    const p = ui.panel(this, `${ev.emoji} ${t(`event.${ev.id}`)}`);
     this.addTo(p, this.add.text(W / 2, H / 2 - 330,
-      `Осталось ${daysLeft(ev)} дн. · Очки: ${S.event.points} ${ev.emoji}\n\nСобытийные существа появляются при создании\nновых (шанс 25%). Сливай их и копи очки!`,
+      t('event.info', { days: daysLeft(ev), points: S.event.points, emoji: ev.emoji }),
       { fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
     ev.milestones.forEach((m, i) => {
       const y = H / 2 - 180 + i * 110;
-      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && '📦 сундук'].filter(Boolean).join(' + ');
+      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && t('event.chest')].filter(Boolean).join(' + ');
       this.addTo(p, this.add.text(W / 2 - 280, y, `${Math.min(S.event.points, m.points)}/${m.points} ${ev.emoji}\n${rw}`, { fontSize: '25px', color: '#fff' }));
       if (S.event.claimed[i])
         this.addTo(p, this.add.text(W / 2 + 210, y + 24, '✅', { fontSize: '38px' }).setOrigin(0.5));
       else if (S.event.points >= m.points)
-        this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, 'Забрать', 0x2e7d5b, () => {
+        this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, t('common.claim'), 0x2e7d5b, () => {
           S.event.claimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
           if (m.chest) this.spawnReward(4);
           jingleFanfare(); track('event_milestone', { points: m.points });
           this.refreshHud(); persist(true); p.destroy(); this.eventPanel();
         }));
     });
-    this.addTo(p, this.add.text(W / 2, H / 2 + 300, 'Когда событие закончится, его существа\nпревратятся в монеты — ничего не пропадёт!', { fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 300, t('event.footer'), { fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
   }
 
   // ---------- Мемпедия ----------
   private memePanel() {
     const total = CHAINS.reduce((n, ch) => n + ch.names.length, 0);
     const found = S.discovered.flat().filter(Boolean).length;
-    const p = ui.panel(this, `📖 Мемпедия ${found}/${total}`);
+    const p = ui.panel(this, t('pedia.title', { found, total }));
     // Сетка портретов: ряд — цепочка, колонка — уровень. Тап по портрету — имя.
     const x0 = W / 2 - 180, y0 = H / 2 - 352;
     CHAINS.forEach((cfg, ci) => {
       const y = y0 + ci * 60;
       this.addTo(p, this.add.image(x0 - 100, y, textureKey(ci, 0)).setDisplaySize(42, 42).setAlpha(0.85));
-      cfg.names.forEach((name, lv) => {
+      cfg.names.forEach((_ru, lv) => {
         const x = x0 + lv * 72;
+        const name = this.cname(ci, lv);
         if (S.discovered[ci][lv]) {
           const img = this.add.image(x, y, textureKey(ci, lv)).setDisplaySize(54, 54).setInteractive();
           const shown = lv === 5 && S.customNames[ci] ? `«${S.customNames[ci]}» (${name})` : name;
-          img.on('pointerdown', () => ui.toast(this, W / 2, y, `${shown} · ${RARITY[lv].name}`, RARITY[lv].color));
+          img.on('pointerdown', () => ui.toast(this, W / 2, y, `${shown} · ${rarityName(lv)}`, RARITY[lv]));
           this.addTo(p, img);
         } else {
           const box = this.add.rectangle(x, y, 52, 52, 0x161028, 0.9).setStrokeStyle(2, 0x4a3a80).setInteractive();
-          box.on('pointerdown', () => ui.toast(this, W / 2, y, ci === SECRET_CHAIN ? 'Секрет… ищи в сундуках 👀' : 'Ещё не открыт', '#8f86b8'));
+          box.on('pointerdown', () => ui.toast(this, W / 2, y, t(ci === SECRET_CHAIN ? 'pedia.secretHint' : 'pedia.locked'), '#8f86b8'));
           this.addTo(p, box);
           this.addTo(p, this.add.text(x, y, '?', { fontFamily: FONT, fontSize: '24px', color: '#5a5474', fontStyle: '700' }).setOrigin(0.5));
         }
@@ -613,9 +691,9 @@ export class GameScene extends Phaser.Scene {
   // ---------- Арена: команда 5 бойцов, кубки, казарма, лидерборд ----------
   private arenaPanel() {
     while (S.arenaClaimed.length < ARENA_MILESTONES.length) S.arenaClaimed.push(false);
-    const p = ui.panel(this, `🏆 Арена · ${S.cups} кубков`);
+    const p = ui.panel(this, t('arena.title', { n: S.cups }));
     // слоты команды: боец снят с поля и НЕ приносит доход
-    this.addTo(p, this.add.text(W / 2, H / 2 - 372, 'Команда (бойцы не приносят доход на поле):', { fontFamily: FONT, fontSize: '20px', color: '#c9beee' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 372, t('arena.teamHint'), { fontFamily: FONT, fontSize: '20px', color: '#c9beee' }).setOrigin(0.5));
     for (let i = 0; i < 5; i++) {
       const x = W / 2 - 240 + i * 120, y = H / 2 - 290;
       const box = this.add.rectangle(x, y, 106, 106, 0x161028, 0.9).setStrokeStyle(2, 0x8f7bd8).setInteractive();
@@ -631,9 +709,9 @@ export class GameScene extends Phaser.Scene {
         box.on('pointerdown', () => { p.destroy(); this.teamPicker(); });
       }
     }
-    this.addTo(p, this.add.text(W / 2, H / 2 - 200, `Сила команды: ${Math.round(teamPower(S.team))}`, { fontFamily: FONT, fontSize: '23px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
-    this.addTo(p, ui.button(this, W / 2, H / 2 - 130, 420, 78, '⚔️ В БОЙ!', 0x9d2e4d, () => {
-      if (!S.team.length) { failSound(); ui.toast(this, W / 2, H / 2 - 130, 'Сначала добавь бойцов!', '#ff7070'); return; }
+    this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('arena.power', { n: Math.round(teamPower(S.team)) }), { fontFamily: FONT, fontSize: '23px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 130, 420, 78, t('arena.fight'), 0x9d2e4d, () => {
+      if (!S.team.length) { failSound(); ui.toast(this, W / 2, H / 2 - 130, t('arena.needTeam'), '#ff7070'); return; }
       p.destroy();
       this.startArenaBattle(1);
     }, 30));
@@ -641,8 +719,8 @@ export class GameScene extends Phaser.Scene {
     (['atk', 'hp'] as const).forEach((k, i) => {
       const cost = upgradeCost(S.upgrades[k]);
       this.addTo(p, ui.button(this, W / 2 - 150 + i * 300, H / 2 - 40, 280, 64,
-        `${k === 'atk' ? '⚔ Атака' : '❤ Броня'} ур.${S.upgrades[k]}\n${cost}🪙`, 0x2e6d9d, () => {
-          if (S.coins < cost) { failSound(); ui.toast(this, W / 2, H / 2 - 40, 'Не хватает монет', '#ff7070'); return; }
+        t(k === 'atk' ? 'arena.atk' : 'arena.hp', { n: S.upgrades[k], cost }), 0x2e6d9d, () => {
+          if (S.coins < cost) { failSound(); ui.toast(this, W / 2, H / 2 - 40, t('common.notEnoughCoins'), '#ff7070'); return; }
           S.coins -= cost; S.upgrades[k]++;
           coinSound(); track('barracks_upgrade', { stat: k });
           this.refreshHud(); persist(); p.destroy(); this.arenaPanel();
@@ -655,23 +733,23 @@ export class GameScene extends Phaser.Scene {
       this.addTo(p, this.add.text(W / 2 - 280, y, `${m.cups}🏆 — ${rw}`, { fontFamily: FONT, fontSize: '21px', color: S.cups >= m.cups ? '#fff' : '#5a5474' }).setOrigin(0, 0.5));
       if (S.arenaClaimed[i]) this.addTo(p, this.add.text(W / 2 + 230, y, '✅', { fontSize: '26px' }).setOrigin(0.5));
       else if (S.cups >= m.cups)
-        this.addTo(p, ui.button(this, W / 2 + 220, y, 150, 44, 'Забрать', 0x2e7d5b, () => {
+        this.addTo(p, ui.button(this, W / 2 + 220, y, 150, 44, t('common.claim'), 0x2e7d5b, () => {
           S.arenaClaimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
           tada(); this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
         }, 17));
     });
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 330, 340, 52, '🏅 Топ игроков', 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 19));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 330, 340, 52, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 19));
   }
 
   /** Пикер бойца: существо переезжает с поля в команду (клетка освобождается). */
   private teamPicker() {
-    const p = ui.panel(this, '➕ Выбери бойца с поля', () => this.arenaPanel());
+    const p = ui.panel(this, t('arena.pickTitle'), () => this.arenaPanel());
     const items: { item: Item; r: number; c: number }[] = [];
     for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) {
       const it = this.grid[r][c]; if (it) items.push({ item: it, r, c });
     }
     if (!items.length)
-      this.addTo(p, this.add.text(W / 2, H / 2, 'На поле пусто!\nКупи существ и возвращайся.', { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center' }).setOrigin(0.5));
+      this.addTo(p, this.add.text(W / 2, H / 2, t('arena.pickEmpty'), { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center' }).setOrigin(0.5));
     items.slice(0, 24).forEach((e, i) => {
       const x = W / 2 - 225 + (i % 4) * 150, y = H / 2 - 300 + Math.floor(i / 4) * 120;
       const st = unitStats(e.item.chain, e.item.level);
@@ -692,7 +770,7 @@ export class GameScene extends Phaser.Scene {
 
   private removeFromTeam(i: number, panel: Phaser.GameObjects.Container) {
     const cell = this.findEmpty();
-    if (!cell) { failSound(); ui.toast(this, W / 2, H / 2 - 290, 'На поле нет места!', '#ff7070'); return; }
+    if (!cell) { failSound(); ui.toast(this, W / 2, H / 2 - 290, t('arena.noRoom'), '#ff7070'); return; }
     const [ch, lv] = S.team[i];
     S.team.splice(i, 1);
     this.spawnItem(ch, lv, ...cell);
@@ -716,33 +794,34 @@ export class GameScene extends Phaser.Scene {
     sdk.submitScore('cups', S.cups);
     track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
     persist(true); this.refreshHud();
-    const p = ui.panel(this, win ? '🎉 ПОБЕДА!' : '💀 Поражение…');
-    this.addTo(p, this.add.text(W / 2, H / 2 - 220,
-      win ? `${d >= 0 ? '+' : ''}${d}🏆  ·  +${coins}🪙${S.wins % 3 === 0 ? '\n\n🎁 Каждая 3-я победа — сундук!' : ''}`
-        : `${d}🏆\n\nПодкачай команду в казарме\nили слей существ повыше уровнем.`,
+    const p = ui.panel(this, t(win ? 'arena.win' : 'arena.lose'));
+    const info = win
+      ? t('arena.winInfo', { d: `${d >= 0 ? '+' : ''}${d}`, coins }) + (S.wins % 3 === 0 ? `\n\n${t('arena.chestHint')}` : '')
+      : t('arena.loseInfo', { d });
+    this.addTo(p, this.add.text(W / 2, H / 2 - 220, info,
       { fontFamily: FONT, fontSize: '30px', color: '#fff', align: 'center', fontStyle: '700' }).setOrigin(0.5));
     if (win && S.wins % 3 === 0) rollChest(this.api, this, W / 2, H / 2 - 100);
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 380, 72, '⚔️ Ещё бой!', 0x9d2e4d, () => { p.destroy(); this.startArenaBattle(1); }, 24));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 380, 72, t('arena.again'), 0x9d2e4d, () => { p.destroy(); this.startArenaBattle(1); }, 24));
     if (!win)
-      this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 460, 66, '🎬 Реванш с бустом ×1.2', 0x2e7d5b, () =>
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 460, 66, t('arena.rematch'), 0x2e7d5b, () =>
         sdk.showRewarded(() => { p.destroy(); this.startArenaBattle(1.2, en); }), 21));
     if (S.ordersDone > 0 && interstitialAllowed()) sdk.maybeInterstitial(); // естественный стык
   }
 
   private async leaderboardPanel() {
-    const p = ui.panel(this, '🏅 Топ по кубкам', () => this.arenaPanel());
+    const p = ui.panel(this, t('arena.lbTitle'), () => this.arenaPanel());
+    const me = t('arena.you');
     let rows = await sdk.getLeaderboardTop('cups');
     if (!rows.length) { // dev-мок: правдоподобный топ вокруг игрока
-      rows = ['Скуф67', 'НагибаторТоля', 'КапибараЛюб', 'xX_БравлеР_Xx', 'сигма-с-урока', 'ПростоДаня', 'Тимофей TV', 'Абобус228', 'ЛещДесантный']
-        .map((name, i) => ({ rank: i + 1, name, score: Math.max(10, S.cups + (5 - i) * 47) }));
-      rows.push({ rank: rows.length + 1, name: 'Ты', score: S.cups });
+      rows = nicks().slice(0, 9).map((name, i) => ({ rank: i + 1, name, score: Math.max(10, S.cups + (5 - i) * 47) }));
+      rows.push({ rank: rows.length + 1, name: me, score: S.cups });
       rows.sort((a, b) => b.score - a.score).forEach((r, i) => (r.rank = i + 1));
     }
     rows.slice(0, 10).forEach((r, i) => {
       const y = H / 2 - 330 + i * 66;
-      const me = r.name === 'Ты';
+      const isMe = r.name === me;
       const medal = r.rank <= 3 ? ['🥇', '🥈', '🥉'][r.rank - 1] : ` ${r.rank}.`;
-      this.addTo(p, this.add.text(W / 2 - 280, y, `${medal} ${r.name}`, { fontFamily: FONT, fontSize: '24px', color: me ? '#ffe066' : '#fff', fontStyle: me ? '800' : '400' }).setOrigin(0, 0.5));
+      this.addTo(p, this.add.text(W / 2 - 280, y, `${medal} ${r.name}`, { fontFamily: FONT, fontSize: '24px', color: isMe ? '#ffe066' : '#fff', fontStyle: isMe ? '800' : '400' }).setOrigin(0, 0.5));
       this.addTo(p, this.add.text(W / 2 + 280, y, `${r.score}🏆`, { fontFamily: FONT, fontSize: '24px', color: '#c9beee' }).setOrigin(1, 0.5));
     });
   }
@@ -763,7 +842,7 @@ export class GameScene extends Phaser.Scene {
     if (S.battle.side >= 0 && S.battle.points > 0) { // награда за прошлую неделю
       const reward = Math.min(30, 5 + Math.floor(S.battle.points / 10));
       S.gems += reward;
-      ui.toast(this, W / 2, H / 2, `⚔️ Битва недели окончена: +${reward}💎 за ${S.battle.points} очков!`);
+      ui.toast(this, W / 2, H / 2, t('wb.over', { gems: reward, points: S.battle.points }));
     }
     S.battle = { week, side: -1, points: 0 };
     persist();
@@ -771,68 +850,65 @@ export class GameScene extends Phaser.Scene {
 
   private battlePanel() {
     const [ta, tb] = this.battleTeams();
-    const p = ui.panel(this, '⚔️ Битва недели');
+    const p = ui.panel(this, t('wb.title'));
     this.addTo(p, this.add.text(W / 2, H / 2 - 310,
-      `${CHAINS[ta].names[5]}  VS  ${CHAINS[tb].names[5]}\n\nВыбери сторону — очки идут за слияния\nсуществ твоей команды. В конце недели —\nкристаллы по очкам. Сторону не сменить!`,
+      t('wb.desc', { a: this.cname(ta, 5), b: this.cname(tb, 5) }),
       { fontFamily: FONT, fontSize: '23px', color: '#fff', align: 'center' }).setOrigin(0.5));
     [ta, tb].forEach((ch, i) => {
       const x = W / 2 - 150 + i * 300;
       this.addTo(p, this.add.image(x, H / 2 - 140, textureKey(ch, 3)).setDisplaySize(140, 140));
       if (S.battle.side < 0)
-        this.addTo(p, ui.button(this, x, H / 2 - 30, 250, 62, `За ${CHAINS[ch].names[0]}!`, i ? 0x9d2e4d : 0x2e6d9d, () => {
+        this.addTo(p, ui.button(this, x, H / 2 - 30, 250, 62, t('wb.join', { name: this.cname(ch, 0) }), i ? 0x9d2e4d : 0x2e6d9d, () => {
           S.battle.side = ch;
           jingleFanfare(); track('battle_join', { chain: CHAINS[ch].id });
           persist(true); p.destroy(); this.battlePanel();
         }, 20));
       else if (S.battle.side === ch)
-        this.addTo(p, this.add.text(x, H / 2 - 30, '⭐ Твоя команда', { fontFamily: FONT, fontSize: '22px', color: '#ffe066', fontStyle: '700' }).setOrigin(0.5));
+        this.addTo(p, this.add.text(x, H / 2 - 30, t('wb.mine'), { fontFamily: FONT, fontSize: '22px', color: '#ffe066', fontStyle: '700' }).setOrigin(0.5));
     });
     if (S.battle.side >= 0) {
-      this.addTo(p, this.add.text(W / 2, H / 2 + 80, `Твои очки: ${S.battle.points} ⚔️`, { fontFamily: FONT, fontSize: '30px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
-      this.addTo(p, ui.button(this, W / 2, H / 2 + 170, 480, 66, '📣 Позвать друзей в мою команду', 0x2e7d5b, () => {
-        navigator.clipboard?.writeText(`Я топлю за команду «${CHAINS[S.battle.side].names[5]}» в Битве недели Brainrot Lab: Merge (${S.battle.points} очков) ⚔️ А ты за кого? Игра — на Яндекс Играх!`).catch(() => {});
+      this.addTo(p, this.add.text(W / 2, H / 2 + 80, t('wb.points', { n: S.battle.points }), { fontFamily: FONT, fontSize: '30px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 170, 480, 66, t('wb.invite'), 0x2e7d5b, () => {
+        navigator.clipboard?.writeText(t('wb.share', { name: this.cname(S.battle.side, 5), n: S.battle.points })).catch(() => {});
         track('battle_share');
-        ui.toast(this, W / 2, H / 2 + 120, 'Скопировано — кидай в чат!');
+        ui.toast(this, W / 2, H / 2 + 120, t('common.copied'));
       }, 22));
     }
   }
 
   // ---------- имя для легендарки: пользовательский контент = скриншоты ----------
   private renamePanel(chain: number) {
-    const p = ui.panel(this, '⭐ ЛЕГЕНДАРКА!');
+    const p = ui.panel(this, t('rename.title'));
     this.addTo(p, this.add.image(W / 2, H / 2 - 230, textureKey(chain, 5)).setDisplaySize(190, 190));
-    this.addTo(p, this.add.text(W / 2, H / 2 - 80,
-      `Ты вырастил «${CHAINS[chain].names[5]}»!\nТакое существо заслуживает СОБСТВЕННОЕ имя.\nОно останется в твоей Мемпедии навсегда.`,
+    this.addTo(p, this.add.text(W / 2, H / 2 - 80, t('rename.desc', { name: this.cname(chain, 5) }),
       { fontFamily: FONT, fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 420, 70, '✏️ Дать имя', 0x8f5ad0, () => {
-      const nm = window.prompt('Имя для твоей легендарки:', S.customNames[chain] ?? '');
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 420, 70, t('rename.btn'), 0x8f5ad0, () => {
+      const nm = window.prompt(t('rename.prompt'), S.customNames[chain] ?? '');
       if (nm?.trim()) {
         S.customNames[chain] = nm.trim().slice(0, 24);
         track('legend_named');
         persist(true);
-        ui.toast(this, W / 2, H / 2, `Теперь это «${S.customNames[chain]}»!`);
+        ui.toast(this, W / 2, H / 2, t('rename.done', { name: S.customNames[chain] }));
       }
     }));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 480, 64, '📣 Похвастаться легендаркой', 0x2e7d5b, () => {
-      const nm = S.customNames[chain] ?? CHAINS[chain].names[5];
-      navigator.clipboard?.writeText(`Моя легендарка «${nm}» уже качает в Brainrot Lab: Merge 🏆 Покажи свою! Игра — на Яндекс Играх.`).catch(() => {});
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 480, 64, t('rename.brag'), 0x2e7d5b, () => {
+      navigator.clipboard?.writeText(t('rename.share', { name: S.customNames[chain] ?? this.cname(chain, 5) })).catch(() => {});
       track('legend_share');
-      ui.toast(this, W / 2, H / 2 + 110, 'Скопировано — кидай в чат!');
+      ui.toast(this, W / 2, H / 2 + 110, t('common.copied'));
     }, 22));
   }
 
   // ---------- секретный «67»: главный вирусный крючок ----------
   private secret67Panel() {
     track('secret_67_found');
-    const p = ui.panel(this, '⁉️ 6 7 !!!');
+    const p = ui.panel(this, t('s67.title'));
     this.addTo(p, this.add.image(W / 2, H / 2 - 220, textureKey(SECRET_CHAIN, 0)).setDisplaySize(180, 180));
-    this.addTo(p, this.add.text(W / 2, H / 2 - 60,
-      'Ты выбил СЕКРЕТНОГО 67!\nШанс — всего 6,7%.\n\nТаких игроков — единицы.\nСольёшь до ЛЕГЕНДО 67 — станешь легендой сам.',
+    this.addTo(p, this.add.text(W / 2, H / 2 - 60, t('s67.desc'),
       { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center' }).setOrigin(0.5));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 140, 480, 72, '📣 Скопировать хвастовство', 0x2e7d5b, () => {
-      navigator.clipboard?.writeText('Я выбил секретного 67 в Brainrot Lab: Merge — шанс всего 6,7% 🔵6️⃣7️⃣ Слабо повторить? Ищи игру на Яндекс Играх!').catch(() => {});
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 140, 480, 72, t('s67.brag'), 0x2e7d5b, () => {
+      navigator.clipboard?.writeText(t('s67.share')).catch(() => {});
       track('secret_67_share');
-      ui.toast(this, W / 2, H / 2 + 90, 'Скопировано — кидай в чат!');
+      ui.toast(this, W / 2, H / 2 + 90, t('common.copied'));
     }));
   }
 
@@ -840,10 +916,10 @@ export class GameScene extends Phaser.Scene {
   private maybeStarterOffer() {
     if (S.starterBought || S.starterOffered || this.time.now < 90_000) return;
     S.starterOffered = true; persist(true);
-    const p = ui.panel(this, '🎁 Подарок новичку');
-    this.addTo(p, this.add.text(W / 2, H / 2 - 220, 'Стартовый набор — выгода ×5\n\n150💎 + 5000🪙\n+ 7 дней без рекламы\n\nТолько один раз!',
+    const p = ui.panel(this, t('starter.title'));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 220, t('starter.desc'),
       { fontSize: '30px', color: '#fff', align: 'center' }).setOrigin(0.5));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 120, 420, 76, 'Забрать со скидкой', 0x2e7d5b, async () => {
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 120, 420, 76, t('starter.btn'), 0x2e7d5b, async () => {
       if (await sdk.purchase('starter', false)) {
         S.starterBought = true; S.gems += 150; S.coins += 5000; S.adFreeUntil = Date.now() + 7 * 86_400_000;
         tada(); this.refreshHud(); persist(true);
@@ -858,11 +934,11 @@ export class GameScene extends Phaser.Scene {
     const seconds = Math.min((Date.now() - S.lastSeen) / 1000, INCOME.offlineCapHours * 3600);
     const earned = Math.floor(S.incomeRate * (seconds * 1000 / INCOME.periodMs));
     if (earned < OFFLINE_MIN_COINS) return;
-    const p = ui.panel(this, '💤 Пока вас не было…');
-    this.addTo(p, this.add.text(W / 2, H / 2 - 200, `Твои брейнроты наработали:\n🪙 ${earned}`, { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    const p = ui.panel(this, t('offline.title'));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('offline.desc', { n: earned }), { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
     const claim = (mult: number) => { S.coins += earned * mult; coinSound(); this.refreshHud(); persist(); p.destroy(); };
-    this.addTo(p, ui.button(this, W / 2, H / 2, 420, 72, `Забрать ${earned}🪙`, 0x5a48a8, () => claim(1)));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 100, 480, 72, `🎬 Забрать ×2 (${earned * 2}🪙)`, 0x2e7d5b,
+    this.addTo(p, ui.button(this, W / 2, H / 2, 420, 72, t('offline.claim', { n: earned }), 0x5a48a8, () => claim(1)));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 100, 480, 72, t('offline.claim2', { n: earned * 2 }), 0x2e7d5b,
       () => sdk.showRewarded(() => claim(2))));
   }
 
@@ -870,7 +946,7 @@ export class GameScene extends Phaser.Scene {
   private startFtue() {
     this.spawnItem(0, 0, 2, 2);
     this.spawnItem(0, 0, 2, 3);
-    this.hint = this.add.text(W / 2, GRID.y + 120, '👆 Перетащи одно существо на другое!', { fontSize: '26px', color: '#ffe066', fontStyle: 'bold' }).setOrigin(0.5).setDepth(8);
+    this.hint = this.add.text(W / 2, GRID.y + 120, t('ftue.drag'), { fontSize: '26px', color: '#ffe066', fontStyle: 'bold', align: 'center', wordWrap: { width: 600 } }).setOrigin(0.5).setDepth(8);
     this.tweens.add({ targets: this.hint, alpha: 0.4, yoyo: true, repeat: -1, duration: 500 });
   }
 
