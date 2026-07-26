@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
-import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL } from './config';
+import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain } from './config';
+import { activeEvent, daysLeft, EventDef } from './events';
+import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
@@ -19,7 +21,12 @@ export class GameScene extends Phaser.Scene {
   private questBadge!: Phaser.GameObjects.Arc;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
+  private ev: EventDef | null = null;
+  private evCfg?: Chain;
   private api: ShopApi = { spawnReward: (lv) => this.spawnReward(lv), refreshHud: () => this.refreshHud() };
+
+  /** Конфиг цепочки с учётом событийной (индекс за пределами CHAINS). */
+  private chainCfg(i: number): Chain { return i === EVENT_CHAIN_INDEX && this.evCfg ? this.evCfg : CHAINS[i]; }
 
   constructor() { super('game'); }
 
@@ -31,12 +38,24 @@ export class GameScene extends Phaser.Scene {
       if (id === 'starter') S.starterBought = true;
     }
 
+    this.ev = activeEvent();
+    if (this.ev) {
+      this.evCfg = { id: this.ev.id, color: this.ev.color, names: this.ev.names };
+      if (S.event.id !== this.ev.id) S.event = { id: this.ev.id, points: 0, claimed: this.ev.milestones.map(() => false) };
+    }
+    generateSprites(this, CHAINS, 0);
+    if (this.evCfg) generateSprites(this, [this.evCfg], EVENT_CHAIN_INDEX);
+
     this.drawBoard();
     this.drawGenerators();
     this.drawHud();
     this.makeOrders();
 
-    if (hadSave) S.items.forEach(([r, c, ch, lv]) => this.spawnItem(ch, lv, r, c, true));
+    if (hadSave) S.items.forEach(([r, c, ch, lv]) => {
+      // Существа закончившегося события конвертируются в монеты — ничего не пропадает.
+      if (ch >= CHAINS.length && !this.evCfg) { S.coins += 100 * (lv + 1); return; }
+      this.spawnItem(ch, lv, r, c, true);
+    });
     else this.startFtue();
 
     const st = streakStatus();
@@ -103,11 +122,10 @@ export class GameScene extends Phaser.Scene {
 
   private spawnItem(chain: number, level: number, r: number, c: number, silent = false) {
     const { x, y } = this.cellXY(r, c);
-    const cfg = CHAINS[chain];
     const box = this.add.container(x, y);
-    const bg = this.add.circle(0, 0, 42, cfg.color).setStrokeStyle(3, level >= 4 ? 0xffe066 : 0xffffff, 0.6);
-    const label = this.add.text(0, 0, `${cfg.names[level][0]}${level + 1}`, { fontSize: '26px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5);
-    box.add([bg, label]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
+    const img = this.add.image(0, 0, textureKey(chain, level));
+    const badge = this.add.text(32, 32, `${level + 1}`, { fontSize: '18px', color: RARITY[level].color, fontStyle: 'bold' }).setOrigin(0.5);
+    box.add([img, badge]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
     const item: Item = { chain, level, obj: box };
     this.grid[r][c] = item;
     this.wireDrag(item);
@@ -116,13 +134,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private checkDiscovery(chain: number, level: number, silent: boolean) {
+    if (chain >= CHAINS.length) return; // событийные существа не входят в Мемпедию
     if (S.discovered[chain][level]) return;
     S.discovered[chain][level] = true;
     if (silent) return;
     const coins = 25 * (level + 1), gems = level >= 4 ? 5 : 0;
     S.coins += coins; S.gems += gems;
     tada();
-    ui.toast(this, W / 2, GRID.y - 20, `📖 Открыто: ${CHAINS[chain].names[level]}! +${coins}🪙${gems ? ` +${gems}💎` : ''}`);
+    ui.toast(this, W / 2, GRID.y + 80, `📖 Открыто: ${CHAINS[chain].names[level]}! +${coins}🪙${gems ? ` +${gems}💎` : ''}`);
     this.refreshHud();
   }
 
@@ -136,7 +155,7 @@ export class GameScene extends Phaser.Scene {
       if (to) {
         const [r, c] = to, target = this.grid[r][c];
         if (!target) { this.grid[from[0]][from[1]] = null; this.grid[r][c] = item; }
-        else if (target !== item && target.chain === item.chain && target.level === item.level && item.level < CHAINS[item.chain].names.length - 1) {
+        else if (target !== item && target.chain === item.chain && target.level === item.level && item.level < this.chainCfg(item.chain).names.length - 1) {
           this.merge(item, target, from, [r, c]); return;
         }
       }
@@ -159,6 +178,10 @@ export class GameScene extends Phaser.Scene {
     popSound(level);
     S.quests.progress.merges++;
     S.score += level * 2;
+    if (a.chain === EVENT_CHAIN_INDEX && this.ev) {
+      S.event.points += level * 2;
+      ui.toast(this, W / 2, GRID.y + 140, `${this.ev.emoji} +${level * 2} очков события`);
+    }
     if (this.hint) { this.hint.destroy(); this.hint = undefined; ui.toast(this, W / 2, 180, 'Отлично! Теперь выполни заказ наверху 👆'); }
     if (level >= 3) this.maybeStarterOffer();
     this.refreshHud();
@@ -169,10 +192,10 @@ export class GameScene extends Phaser.Scene {
   private drawGenerators() {
     CHAINS.forEach((cfg, i) => {
       const x = 120 + i * 160, y = 308;
-      const circle = this.add.circle(x, y, 32, cfg.color).setStrokeStyle(3, 0xffffff, 0.5).setInteractive();
-      this.add.text(x, y - 2, cfg.names[0][0], { fontSize: '26px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5);
+      this.add.circle(x, y, 34, 0x2a1f4d).setStrokeStyle(3, cfg.color);
+      const icon = this.add.image(x, y, textureKey(i, 0)).setScale(0.62).setInteractive();
       this.genTexts.push(this.add.text(x, y + 42, '', { fontSize: '18px', color: '#7fdcff' }).setOrigin(0.5));
-      circle.on('pointerdown', () => this.tapGenerator(i));
+      icon.on('pointerdown', () => this.tapGenerator(i));
     });
     this.tickGenerators();
   }
@@ -198,6 +221,8 @@ export class GameScene extends Phaser.Scene {
   // ---------- HUD ----------
   private drawHud() {
     this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontSize: '38px', color: '#ffe066', fontStyle: 'bold' }).setOrigin(0.5);
+    if (this.ev)
+      ui.button(this, W / 2, 134, 340, 44, `${this.ev.emoji} ${this.ev.title} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 20);
     this.coinsText = this.add.text(40, 86, '', { fontSize: '30px', color: '#fff' });
     this.gemsText = this.add.text(260, 86, '', { fontSize: '30px', color: '#c9a6ff' });
     this.energyText = this.add.text(460, 86, '', { fontSize: '30px', color: '#7fdcff' });
@@ -227,7 +252,9 @@ export class GameScene extends Phaser.Scene {
     const cell = this.findEmpty();
     if (!cell) { failSound(); ui.toast(this, W / 2, 1160, 'Поле заполнено!', '#ff7070'); return; }
     S.energy -= ENERGY.spawnCost;
-    this.spawnItem(Phaser.Math.Between(0, CHAINS.length - 1), 0, ...cell);
+    // Во время события 25% новых существ — событийные.
+    const chain = this.evCfg && Math.random() < 0.25 ? EVENT_CHAIN_INDEX : Phaser.Math.Between(0, CHAINS.length - 1);
+    this.spawnItem(chain, 0, ...cell);
     S.quests.progress.spawns++;
     this.refreshHud();
   }
@@ -328,6 +355,29 @@ export class GameScene extends Phaser.Scene {
     this.addTo(p, this.add.text(W / 2, H / 2 + 260, 'Новые задания — каждый день!', { fontSize: '24px', color: '#8f86b8' }).setOrigin(0.5));
   }
 
+  // ---------- сезонное событие ----------
+  private eventPanel() {
+    const ev = this.ev!;
+    const p = ui.panel(this, `${ev.emoji} ${ev.title}`);
+    this.addTo(p, this.add.text(W / 2, H / 2 - 330,
+      `Осталось ${daysLeft(ev)} дн. · Очки: ${S.event.points} ${ev.emoji}\n\nСобытийные существа появляются при создании\nновых (шанс 25%). Сливай их и копи очки!`,
+      { fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    ev.milestones.forEach((m, i) => {
+      const y = H / 2 - 180 + i * 110;
+      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && '📦 сундук'].filter(Boolean).join(' + ');
+      this.addTo(p, this.add.text(W / 2 - 280, y, `${Math.min(S.event.points, m.points)}/${m.points} ${ev.emoji}\n${rw}`, { fontSize: '25px', color: '#fff' }));
+      if (S.event.claimed[i])
+        this.addTo(p, this.add.text(W / 2 + 210, y + 24, '✅', { fontSize: '38px' }).setOrigin(0.5));
+      else if (S.event.points >= m.points)
+        this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, 'Забрать', 0x2e7d5b, () => {
+          S.event.claimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
+          if (m.chest) this.spawnReward(4);
+          tada(); this.refreshHud(); persist(true); p.destroy(); this.eventPanel();
+        }));
+    });
+    this.addTo(p, this.add.text(W / 2, H / 2 + 300, 'Когда событие закончится, его существа\nпревратятся в монеты — ничего не пропадёт!', { fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+  }
+
   // ---------- Мемпедия ----------
   private memePanel() {
     const total = CHAINS.length * CHAINS[0].names.length;
@@ -377,7 +427,7 @@ export class GameScene extends Phaser.Scene {
   private startFtue() {
     this.spawnItem(0, 0, 2, 2);
     this.spawnItem(0, 0, 2, 3);
-    this.hint = this.add.text(W / 2, GRID.y - 24, '👆 Перетащи одно существо на другое!', { fontSize: '26px', color: '#ffe066', fontStyle: 'bold' }).setOrigin(0.5);
+    this.hint = this.add.text(W / 2, GRID.y + 120, '👆 Перетащи одно существо на другое!', { fontSize: '26px', color: '#ffe066', fontStyle: 'bold' }).setOrigin(0.5).setDepth(8);
     this.tweens.add({ targets: this.hint, alpha: 0.4, yoyo: true, repeat: -1, duration: 500 });
   }
 

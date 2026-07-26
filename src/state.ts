@@ -32,6 +32,7 @@ export const S = {
   discovered: [] as boolean[][],
   genLast: [0, 0, 0, 0],
   freeChestLast: 0,
+  event: { id: '', points: 0, claimed: [] as boolean[] },
   ftueDone: false,
   score: 0,
   ordersDone: 0,
