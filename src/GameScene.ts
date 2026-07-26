@@ -16,6 +16,9 @@ import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } fro
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
 interface Order { chain: number; level: number; obj: Phaser.GameObjects.Container }
 
+// Полоса заказов: одна плашка на три слота, сразу над полем.
+const ORDER_BAR = { y: 196, w: 690, h: 72 };
+
 export class GameScene extends Phaser.Scene {
   private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
   private grid: (Item | null)[][] = [];
@@ -35,6 +38,7 @@ export class GameScene extends Phaser.Scene {
   private hint?: Phaser.GameObjects.Text;
   private tipBanner?: Phaser.GameObjects.Container;
   private mergeHints?: Phaser.GameObjects.Graphics;
+  private orderBar!: Phaser.GameObjects.Container;
   private ev: EventDef | null = null;
   private evCfg?: Chain;
   private api: ShopApi = {
@@ -301,6 +305,8 @@ export class GameScene extends Phaser.Scene {
       box.setDepth(0);
       this.clearMergeHints();
       const from = this.findItem(item)!;
+      // Брошено на полосу заказов — пробуем сдать, минуя обычную логику клеток.
+      if (box.y < GRID.y && this.tryDeliverByDrop(item, box.x, box.y)) return;
       const to = this.cellAt(box.x, box.y);
       if (to) {
         const [r, c] = to, target = this.grid[r][c];
@@ -573,6 +579,7 @@ export class GameScene extends Phaser.Scene {
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
     this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
+    this.markOrders(); // состав поля изменился — обновляем подсветку заказов
     this.checkTips();
   }
 
@@ -617,9 +624,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- заказы ----------
-  private makeOrders() { for (let i = 0; i < 3; i++) this.newOrder(i); }
+  private makeOrders() { this.drawOrderBar(); for (let i = 0; i < 3; i++) this.newOrder(i); }
 
-  /** Карточка заказа: портрет нужного существа, имя и награда — понятно без чтения. */
+  /**
+   * Полоса заказов: три слота в одной плашке вместо трёх отдельных карточек.
+   * Заказы — главный источник монет и единственная причина отдавать существ, поэтому
+   * убрать их нельзя. Но тапать по ним приходится часто, а висят они вверху экрана,
+   * поэтому сдать заказ можно ещё и перетаскиванием существа на полосу — жест,
+   * который начинается в удобной зоне и не требует тянуться пальцем.
+   */
+  private drawOrderBar() {
+    this.orderBar = this.add.container(W / 2, ORDER_BAR.y);
+    const g = this.add.graphics();
+    const w = ORDER_BAR.w, h = ORDER_BAR.h;
+    g.fillStyle(0x000000, 0.3); g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, 16);
+    g.fillGradientStyle(0x352a5e, 0x352a5e, 0x281f4a, 0x281f4a, 1);
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+    g.lineStyle(2, 0x5a48a8, 0.9); g.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+    this.orderBar.add(g);
+  }
+
+  /** Слот заказа внутри полосы: портрет, имя, награда и подсветка «можно сдать». */
   private newOrder(slot: number) {
     // Сложность растёт с прогрессом: заказы не выше уже открытых уровней локации (+1 на вырост).
     const pool = ZONES[S.zone].chains;
@@ -629,18 +654,47 @@ export class GameScene extends Phaser.Scene {
     const chain = Phaser.Math.RND.pick(pool) as number;
     this.orders[slot]?.obj.destroy();
 
-    // Полоса 160..248 — между кнопками локации/битвы и генераторами.
-    const c = ui.card(this, 130 + slot * 230, 204, 214, 88, 0x3d2f6e);
-    c.add(this.add.image(-66, 0, textureKey(chain, level)).setDisplaySize(62, 62));
-    c.add(this.add.text(26, -18, this.cname(chain, level), {
-      fontFamily: FONT, fontSize: '16px', color: '#fff', fontStyle: '600',
-      align: 'center', wordWrap: { width: 128 }, lineSpacing: -3,
+    const sw = ORDER_BAR.w / 3;
+    const c = this.add.container(W / 2 + (slot - 1) * sw, ORDER_BAR.y);
+    c.add(this.add.image(-sw / 2 + 32, 0, textureKey(chain, level)).setDisplaySize(50, 50));
+    c.add(this.add.text(14, -12, this.cname(chain, level), {
+      fontFamily: FONT, fontSize: '14px', color: '#fff', fontStyle: '600',
+      align: 'center', wordWrap: { width: 140 }, lineSpacing: -3,
     }).setOrigin(0.5));
-    c.add(ui.chip(this, 26, 21, 112, 26, `🪙 ${ORDER_REWARD_BY_LEVEL[level]}`));
-    const hit = this.add.rectangle(0, 0, 214, 88, 0xffffff, 0.001).setInteractive();
+    c.add(this.add.text(14, 16, `🪙 ${ORDER_REWARD_BY_LEVEL[level]}`, {
+      fontFamily: FONT, fontSize: '15px', color: '#ffe066', fontStyle: '700',
+    }).setOrigin(0.5));
+    const hit = this.add.rectangle(0, 0, sw - 6, ORDER_BAR.h - 8, 0xffffff, 0.001).setInteractive();
     hit.on('pointerdown', () => this.deliver(slot));
     c.add(hit);
     this.orders[slot] = { chain, level, obj: c };
+    this.markOrders();
+  }
+
+  /**
+   * Заказы, которые нечем сдать, приглушаются. Обратный вариант (обводить доступные)
+   * шумел: в начале игры подходят почти все три слота, и полоса пестрила рамками.
+   */
+  private markOrders() {
+    this.orders.forEach(o => {
+      if (!o) return;
+      const has = this.grid.some(row => row.some(it => it && it.chain === o.chain && it.level === o.level));
+      o.obj.setAlpha(has ? 1 : 0.42);
+    });
+  }
+
+  /** Сдача заказа перетаскиванием: существо брошено на полосу заказов. */
+  private tryDeliverByDrop(item: Item, x: number, y: number): boolean {
+    if (Math.abs(y - ORDER_BAR.y) > ORDER_BAR.h / 2 + 20) return false;
+    const slot = this.orders.findIndex(o => o.chain === item.chain && o.level === item.level);
+    if (slot < 0) {
+      // Бросили на полосу неподходящее существо — подсказываем, а не молчим.
+      failSound();
+      ui.toast(this, x, ORDER_BAR.y + 60, t('order.missing'), '#ff7070');
+      return false;
+    }
+    this.deliver(slot);
+    return true;
   }
 
   private deliver(slot: number) {
