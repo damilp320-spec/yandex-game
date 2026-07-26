@@ -24,8 +24,19 @@ export function startBattle(
   onEnd: (win: boolean) => void,
 ) {
   const root = scene.add.container(0, 0).setDepth(70);
-  root.add(scene.add.rectangle(W / 2, H / 2, W, H, 0x08050f, 0.94).setInteractive());
-  root.add(scene.add.text(W / 2, 60, t('battle.vs', { name: enemyName }), { fontFamily: FONT, fontSize: '32px', color: '#ffe066', fontStyle: '800' }).setOrigin(0.5));
+  // Полностью перекрываем поле: через полупрозрачный фон просвечивали кнопки и клетки,
+  // и бой читался как «поверх интерфейса», а не как отдельная сцена.
+  root.add(scene.add.rectangle(W / 2, H / 2, W, H, 0x08050f, 1).setInteractive());
+  const bg = scene.add.graphics();
+  bg.fillGradientStyle(0x1d1436, 0x1d1436, 0x0a0714, 0x0a0714, 1);
+  bg.fillRect(0, 0, W, H);
+  // «Арена»: полосы за строями и разделительная линия по центру
+  bg.fillStyle(0x2e2258, 0.5); bg.fillRoundedRect(60, 150, 220, H - 300, 24);
+  bg.fillStyle(0x50203a, 0.5); bg.fillRoundedRect(W - 280, 150, 220, H - 300, 24);
+  bg.lineStyle(2, 0x8f7bd8, 0.25); bg.lineBetween(W / 2, 140, W / 2, H - 130);
+  root.add(bg);
+  root.add(scene.add.text(W / 2, 60, t('battle.vs', { name: enemyName }), { fontFamily: FONT, fontSize: '30px', color: '#ffe066', fontStyle: '800', align: 'center', wordWrap: { width: 660 } }).setOrigin(0.5).setStroke('#120c22', 6));
+  root.add(scene.add.text(W / 2, H / 2, 'VS', { fontFamily: FONT, fontSize: '46px', color: '#ffffff', fontStyle: '900' }).setOrigin(0.5).setAlpha(0.13));
 
   const fighters: Fighter[] = [];
   const mkFighter = (ch: number, lv: number, side: 0 | 1, i: number, powerFactor: number) => {

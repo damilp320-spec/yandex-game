@@ -14,13 +14,16 @@ import { openShop, rollChest, ShopApi } from './shop';
 import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } from './i18n';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
-interface Order { chain: number; level: number; text: Phaser.GameObjects.Text }
+interface Order { chain: number; level: number; obj: Phaser.GameObjects.Container }
 
 export class GameScene extends Phaser.Scene {
   private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
   private grid: (Item | null)[][] = [];
   private orders: Order[] = [];
-  private genEntries: { chain: number; text: Phaser.GameObjects.Text }[] = [];
+  private genEntries: {
+    chain: number; text: Phaser.GameObjects.Text;
+    ring: Phaser.GameObjects.Graphics; icon: Phaser.GameObjects.Image;
+  }[] = [];
   private coinsText!: Phaser.GameObjects.Text;
   private gemsText!: Phaser.GameObjects.Text;
   private incomeText!: Phaser.GameObjects.Text;
@@ -32,7 +35,8 @@ export class GameScene extends Phaser.Scene {
   private arenaBtn!: Phaser.GameObjects.Container;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
-  private tipBanner?: Phaser.GameObjects.Text;
+  private tipBanner?: Phaser.GameObjects.Container;
+  private mergeHints?: Phaser.GameObjects.Graphics;
   private ev: EventDef | null = null;
   private evCfg?: Chain;
   private api: ShopApi = {
@@ -293,12 +297,13 @@ export class GameScene extends Phaser.Scene {
   private wireDrag(item: Item) {
     const box = item.obj;
     let dragged = false;
-    box.on('dragstart', () => { dragged = true; });
+    box.on('dragstart', () => { dragged = true; this.showMergeHints(item); });
     box.on('pointerup', () => { if (!dragged) this.tapCreature(item); });
     box.on('drag', (_p: unknown, dx: number, dy: number) => { box.setPosition(dx, dy).setDepth(10); });
     box.on('dragend', () => {
       dragged = false;
       box.setDepth(0);
+      this.clearMergeHints();
       const from = this.findItem(item)!;
       const to = this.cellAt(box.x, box.y);
       if (to) {
@@ -311,6 +316,34 @@ export class GameScene extends Phaser.Scene {
       const pos = this.cellXY(...this.findItem(item)!);
       box.setPosition(pos.x, pos.y);
     });
+  }
+
+  /**
+   * Подсветка клеток, с которыми перетаскиваемое существо можно слить.
+   * В merge-играх это главная подсказка: игроку не приходится глазами искать пару.
+   */
+  private showMergeHints(item: Item) {
+    this.clearMergeHints();
+    if (item.level >= this.chainCfg(item.chain).names.length - 1) return; // максимум цепочки
+    const g = this.add.graphics().setDepth(-1); // выше поля, ниже существ
+    let found = false;
+    for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) {
+      const it = this.grid[r][c];
+      if (!it || it === item || it.chain !== item.chain || it.level !== item.level) continue;
+      const { x, y } = this.cellXY(r, c);
+      const s = GRID.cell / 2 - 5;
+      g.fillStyle(0xffe066, 0.16); g.fillRoundedRect(x - s, y - s, s * 2, s * 2, 12);
+      g.lineStyle(4, 0xffe066, 0.95); g.strokeRoundedRect(x - s, y - s, s * 2, s * 2, 12);
+      found = true;
+    }
+    if (!found) { g.destroy(); return; }
+    this.mergeHints = g;
+    this.tweens.add({ targets: g, alpha: { from: 0.5, to: 1 }, yoyo: true, repeat: -1, duration: 420 });
+  }
+
+  private clearMergeHints() {
+    this.mergeHints?.destroy();
+    this.mergeHints = undefined;
   }
 
   private findItem(item: Item): [number, number] | null {
@@ -342,13 +375,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- генераторы ----------
+  /** Кнопка-генератор: кольцо заполняется по кулдауну, готовый светится и «дышит». */
   private drawGenerators() {
     const chains = ZONES[S.zone].chains;
     chains.forEach((ch, i) => {
-      const x = W / 2 - (chains.length - 1) * 80 + i * 160, y = 296;
-      this.add.circle(x, y, 34, 0x2a1f4d).setStrokeStyle(3, CHAINS[ch].color);
-      const icon = this.add.image(x, y, textureKey(ch, 0)).setDisplaySize(58, 58).setInteractive();
-      this.genEntries.push({ chain: ch, text: this.add.text(x, y + 44, '', { fontSize: '18px', color: '#7fdcff' }).setOrigin(0.5) });
+      const x = W / 2 - (chains.length - 1) * 80 + i * 160, y = 290;
+      this.add.circle(x, y, 36, 0x2a1f4d, 0.95);
+      const ring = this.add.graphics({ x, y });
+      const icon = this.add.image(x, y, textureKey(ch, 0)).setDisplaySize(56, 56).setInteractive();
+      const text = this.add.text(x, y + 30, '', { fontFamily: FONT, fontSize: '15px', color: '#7fdcff', fontStyle: '700' })
+        .setOrigin(0.5).setStroke('#1a1230', 4);
+      this.genEntries.push({ chain: ch, text, ring, icon });
       icon.on('pointerdown', () => this.tapGenerator(ch));
     });
     this.tickGenerators();
@@ -366,9 +403,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tickGenerators() {
-    this.genEntries.forEach(({ chain, text }) => {
+    this.genEntries.forEach(({ chain, text, ring, icon }) => {
       const left = GEN.cooldownMs - (Date.now() - S.genLast[chain]);
-      text.setText(left > 0 ? `${Math.ceil(left / 1000)}${t('hud.sec')}` : t('gen.ready')).setColor(left > 0 ? '#8f86b8' : '#7fdcff');
+      const ready = left <= 0;
+      text.setText(ready ? t('gen.ready') : `${Math.ceil(left / 1000)}${t('hud.sec')}`)
+        .setColor(ready ? '#7fdcff' : '#c9beee');
+      icon.setAlpha(ready ? 1 : 0.45);
+      ring.clear();
+      ring.lineStyle(4, 0x4a3a80, 0.9);
+      ring.beginPath(); ring.arc(0, 0, 40, 0, Math.PI * 2); ring.strokePath();
+      ring.lineStyle(4, ready ? CHAINS[chain].color : 0x7fdcff, 1);
+      ring.beginPath();
+      ring.arc(0, 0, 40, -Math.PI / 2, ready ? Math.PI * 1.5 : -Math.PI / 2 + Math.PI * 2 * (1 - left / GEN.cooldownMs));
+      ring.strokePath();
+      // готовый генератор мягко пульсирует — видно, что можно тапнуть
+      if (ready && !icon.getData('pulse')) {
+        icon.setData('pulse', this.tweens.add({ targets: icon, scale: { from: icon.scale, to: icon.scale * 1.1 }, yoyo: true, repeat: -1, duration: 700 }));
+      } else if (!ready && icon.getData('pulse')) {
+        (icon.getData('pulse') as Phaser.Tweens.Tween).stop();
+        icon.setData('pulse', null);
+        icon.setDisplaySize(56, 56);
+      }
     });
   }
 
@@ -385,11 +440,19 @@ export class GameScene extends Phaser.Scene {
     this.gemsText = ui.pill(this, 264, 88, 170, '💎', 0xc9a6ff);
     this.incomeText = ui.pill(this, 454, 88, 242, '💰', 0x7fdc8f);
 
-    ui.button(this, 105, 1132, 170, 56, t('hud.shop'), 0x8f5ad0, () => openShop(this, this.api), 18);
-    ui.button(this, 285, 1132, 170, 56, t('hud.quests'), 0x2e6d9d, () => this.questsPanel(), 18);
-    this.questBadge = this.add.circle(362, 1108, 9, 0xff5050).setDepth(1);
-    ui.button(this, 465, 1132, 170, 56, t('hud.pedia'), 0x5a48a8, () => this.memePanel(), 18);
-    this.arenaBtn = ui.button(this, 645, 1132, 170, 56, t('hud.arena'), 0x9d5a2e, () => this.arenaPanel(), 18);
+    // Четыре таба ровно по ширине экрана: 12px поля по краям, 8px между кнопками
+    // (при прежних 170px последняя кнопка выходила за правый край на 10px).
+    const tabs: [string, number, () => void][] = [
+      [t('hud.shop'), 0x8f5ad0, () => openShop(this, this.api)],
+      [t('hud.quests'), 0x2e6d9d, () => this.questsPanel()],
+      [t('hud.pedia'), 0x5a48a8, () => this.memePanel()],
+      [t('hud.arena'), 0x9d5a2e, () => this.arenaPanel()],
+    ];
+    tabs.forEach(([label, color, cb], i) => {
+      const btn = ui.button(this, 96 + i * 176, 1132, 168, 56, label, color, cb, 18);
+      if (i === 3) this.arenaBtn = btn;
+      if (i === 1) this.questBadge = this.add.circle(96 + i * 176 + 76, 1108, 9, 0xff5050).setDepth(1);
+    });
 
     const spawnBtn = ui.button(this, 200, 1210, 360, 64, '', 0x5a48a8, () => this.trySpawn());
     this.spawnLabel = spawnBtn.list[1] as Phaser.GameObjects.Text; // [graphics, text, hit]
@@ -441,14 +504,24 @@ export class GameScene extends Phaser.Scene {
   /** Баннер в свободной зоне + пульс целевого элемента (стрелки не нужны — глаз ловит движение). */
   private tip(key: string, target?: Phaser.GameObjects.GameObject) {
     this.tipBanner?.destroy();
-    const b = this.add.text(W / 2, 1072, t(key), {
-      fontFamily: FONT, fontSize: '23px', color: '#ffe066', backgroundColor: '#2a1f4d',
-      padding: { x: 14, y: 10 }, align: 'center', wordWrap: { width: 640 },
-    }).setOrigin(0.5).setDepth(20);
+    const b = this.add.container(W / 2, 1064).setDepth(20);
+    const label = this.add.text(0, 0, t(key), {
+      fontFamily: FONT, fontSize: '22px', color: '#ffe066', fontStyle: '700',
+      align: 'center', wordWrap: { width: 600 },
+    }).setOrigin(0.5);
+    const w = label.width + 36, h = label.height + 22;
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.45); g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, 14);
+    g.fillStyle(0x2a1f4d, 0.98); g.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+    g.lineStyle(2, 0xffe066, 0.7); g.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+    b.add([g, label]);
     this.tipBanner = b;
-    this.tweens.add({ targets: b, alpha: 0.5, yoyo: true, repeat: 5, duration: 520 });
+    this.tweens.add({ targets: b, y: { from: 1084, to: 1064 }, alpha: { from: 0, to: 1 }, duration: 260 });
     if (target) this.tweens.add({ targets: target, scale: 1.15, yoyo: true, repeat: 5, duration: 520 });
-    this.time.delayedCall(6200, () => { if (this.tipBanner === b) this.tipBanner = undefined; b.destroy(); });
+    this.time.delayedCall(6200, () => {
+      if (this.tipBanner === b) this.tipBanner = undefined;
+      this.tweens.add({ targets: b, alpha: 0, duration: 300, onComplete: () => b.destroy() });
+    });
   }
 
   private tipIncome() {
@@ -515,6 +588,7 @@ export class GameScene extends Phaser.Scene {
   // ---------- заказы ----------
   private makeOrders() { for (let i = 0; i < 3; i++) this.newOrder(i); }
 
+  /** Карточка заказа: портрет нужного существа, имя и награда — понятно без чтения. */
   private newOrder(slot: number) {
     // Сложность растёт с прогрессом: заказы не выше уже открытых уровней локации (+1 на вырост).
     const pool = ZONES[S.zone].chains;
@@ -522,12 +596,20 @@ export class GameScene extends Phaser.Scene {
     pool.forEach(ch => S.discovered[ch].forEach((d, lv) => { if (d) maxLv = Math.max(maxLv, lv); }));
     const level = Phaser.Math.Between(1, Math.min(4, maxLv + 1));
     const chain = Phaser.Math.RND.pick(pool) as number;
-    this.orders[slot]?.text.destroy();
-    const text = this.add.text(130 + slot * 230, 200, t('order.label', { name: this.cname(chain, level), reward: ORDER_REWARD_BY_LEVEL[level] }),
-      { fontSize: '21px', color: '#fff', backgroundColor: '#3d2f6e', padding: { x: 10, y: 8 }, align: 'center' })
-      .setOrigin(0.5).setInteractive();
-    text.on('pointerdown', () => this.deliver(slot));
-    this.orders[slot] = { chain, level, text };
+    this.orders[slot]?.obj.destroy();
+
+    // Полоса 160..248 — между кнопками локации/битвы и генераторами.
+    const c = ui.card(this, 130 + slot * 230, 204, 214, 88, 0x3d2f6e);
+    c.add(this.add.image(-66, 0, textureKey(chain, level)).setDisplaySize(62, 62));
+    c.add(this.add.text(26, -18, this.cname(chain, level), {
+      fontFamily: FONT, fontSize: '16px', color: '#fff', fontStyle: '600',
+      align: 'center', wordWrap: { width: 128 }, lineSpacing: -3,
+    }).setOrigin(0.5));
+    c.add(ui.chip(this, 26, 21, 112, 26, `🪙 ${ORDER_REWARD_BY_LEVEL[level]}`));
+    const hit = this.add.rectangle(0, 0, 214, 88, 0xffffff, 0.001).setInteractive();
+    hit.on('pointerdown', () => this.deliver(slot));
+    c.add(hit);
+    this.orders[slot] = { chain, level, obj: c };
   }
 
   private deliver(slot: number) {
@@ -540,7 +622,7 @@ export class GameScene extends Phaser.Scene {
         S.ordersDone++; S.quests.progress.orders++; S.score += o.level * 3;
         jingleOrder();
         track('order_done');
-        ui.toast(this, o.text.x, o.text.y, `+${ORDER_REWARD_BY_LEVEL[o.level]}🪙`);
+        ui.toast(this, o.obj.x, o.obj.y, `+${ORDER_REWARD_BY_LEVEL[o.level]}🪙`);
         this.newOrder(slot);
         // Естественный стык для interstitial (капы в sdk.ts, отключаемо покупкой).
         if (S.ordersDone % INTERSTITIAL.everyNOrders === 0 && interstitialAllowed()) sdk.maybeInterstitial();
@@ -549,7 +631,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
     failSound();
-    ui.toast(this, o.text.x, o.text.y, t('order.missing'), '#ff7070');
+    // Подсвечиваем карточку — сразу видно, какого существа не хватило.
+    this.tweens.add({ targets: o.obj, x: o.obj.x + 8, duration: 55, yoyo: true, repeat: 2 });
+    ui.toast(this, o.obj.x, o.obj.y - 60, t('order.missing'), '#ff7070');
   }
 
   // ---------- ежедневный бонус ----------
@@ -696,19 +780,20 @@ export class GameScene extends Phaser.Scene {
     // слоты команды: боец снят с поля и НЕ приносит доход
     this.addTo(p, this.add.text(W / 2, H / 2 - 372, t('arena.teamHint'), { fontFamily: FONT, fontSize: '20px', color: '#c9beee' }).setOrigin(0.5));
     for (let i = 0; i < 5; i++) {
-      const x = W / 2 - 240 + i * 120, y = H / 2 - 290;
-      const box = this.add.rectangle(x, y, 106, 106, 0x161028, 0.9).setStrokeStyle(2, 0x8f7bd8).setInteractive();
-      this.addTo(p, box);
+      const x = W / 2 - 240 + i * 120, y = H / 2 - 296;
       const member = S.team[i];
+      const slot = ui.card(this, x, y, 108, 108, member ? 0x3a2f66 : 0x231b42, 14);
+      this.addTo(p, slot);
       if (member) {
         const st = unitStats(member[0], member[1]);
-        this.addTo(p, this.add.image(x, y, textureKey(member[0], member[1])).setDisplaySize(96, 96));
-        this.addTo(p, this.add.text(x, y + 66, `⚔${st.dmg} ❤${st.hp}`, { fontFamily: FONT, fontSize: '15px', color: '#c9beee' }).setOrigin(0.5));
-        box.on('pointerdown', () => this.removeFromTeam(i, p));
+        slot.add(this.add.image(0, -8, textureKey(member[0], member[1])).setDisplaySize(84, 84));
+        slot.add(ui.chip(this, 0, 40, 100, 24, `⚔${st.dmg} ❤${st.hp}`, '#c9beee'));
       } else {
-        this.addTo(p, this.add.text(x, y, '+', { fontFamily: FONT, fontSize: '44px', color: '#5a5474' }).setOrigin(0.5));
-        box.on('pointerdown', () => { p.destroy(); this.teamPicker(); });
+        slot.add(this.add.text(0, 0, '+', { fontFamily: FONT, fontSize: '46px', color: '#5a5474', fontStyle: '700' }).setOrigin(0.5));
       }
+      const hit = this.add.rectangle(0, 0, 108, 108, 0xffffff, 0.001).setInteractive();
+      hit.on('pointerdown', () => (member ? this.removeFromTeam(i, p) : (p.destroy(), this.teamPicker())));
+      slot.add(hit);
     }
     this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('arena.power', { n: Math.round(teamPower(S.team)) }), { fontFamily: FONT, fontSize: '23px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
     this.addTo(p, ui.button(this, W / 2, H / 2 - 130, 420, 78, t('arena.fight'), 0x9d2e4d, () => {
@@ -728,18 +813,32 @@ export class GameScene extends Phaser.Scene {
         }, 19));
     });
     // милстоуны кубков
+    // Милстоуны: полоса прогресса до следующего порога + компактные строки наград.
+    const next = ARENA_MILESTONES.find((m, i) => !S.arenaClaimed[i] && S.cups < m.cups);
+    if (next) {
+      const prev = ARENA_MILESTONES.filter(m => m.cups < next.cups).pop()?.cups ?? 0;
+      const k = Math.max(0, Math.min(1, (S.cups - prev) / (next.cups - prev)));
+      const g = this.add.graphics();
+      g.fillStyle(0x161028, 0.9); g.fillRoundedRect(W / 2 - 280, H / 2 + 12, 560, 22, 11);
+      g.fillStyle(0xffb84d, 1); g.fillRoundedRect(W / 2 - 278, H / 2 + 14, Math.max(4, 556 * k), 18, 9);
+      this.addTo(p, g);
+      this.addTo(p, this.add.text(W / 2, H / 2 + 23, `${S.cups} / ${next.cups}🏆`,
+        { fontFamily: FONT, fontSize: '15px', color: '#241a45', fontStyle: '800' }).setOrigin(0.5));
+    }
     ARENA_MILESTONES.forEach((m, i) => {
-      const y = H / 2 + 40 + i * 52;
+      const y = H / 2 + 62 + i * 46;
       const rw = m.coins ? `${m.coins}🪙` : `${m.gems}💎`;
-      this.addTo(p, this.add.text(W / 2 - 280, y, `${m.cups}🏆 — ${rw}`, { fontFamily: FONT, fontSize: '21px', color: S.cups >= m.cups ? '#fff' : '#5a5474' }).setOrigin(0, 0.5));
-      if (S.arenaClaimed[i]) this.addTo(p, this.add.text(W / 2 + 230, y, '✅', { fontSize: '26px' }).setOrigin(0.5));
-      else if (S.cups >= m.cups)
-        this.addTo(p, ui.button(this, W / 2 + 220, y, 150, 44, t('common.claim'), 0x2e7d5b, () => {
+      const reached = S.cups >= m.cups;
+      this.addTo(p, this.add.text(W / 2 - 280, y, `${m.cups}🏆 — ${rw}`,
+        { fontFamily: FONT, fontSize: '20px', color: reached ? '#fff' : '#6b6490', fontStyle: reached ? '600' : '400' }).setOrigin(0, 0.5));
+      if (S.arenaClaimed[i]) this.addTo(p, this.add.text(W / 2 + 240, y, '✅', { fontSize: '24px' }).setOrigin(0.5));
+      else if (reached)
+        this.addTo(p, ui.button(this, W / 2 + 210, y, 150, 40, t('common.claim'), 0x2e7d5b, () => {
           S.arenaClaimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
           tada(); this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
-        }, 17));
+        }, 16));
     });
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 330, 340, 52, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 19));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 336, 340, 48, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 19));
   }
 
   /** Пикер бойца: существо переезжает с поля в команду (клетка освобождается). */

@@ -29,6 +29,34 @@ export function button(s: Phaser.Scene, x: number, y: number, w: number, h: numb
   return c;
 }
 
+/**
+ * Карточка: скруглённый градиентный прямоугольник с тенью и верхним бликом —
+ * основа для плиток (заказы, слоты команды). Содержимое добавляется поверх.
+ */
+export function card(s: Phaser.Scene, x: number, y: number, w: number, h: number,
+  color = 0x3d2f6e, radius = 16): Phaser.GameObjects.Container {
+  const c = s.add.container(x, y);
+  const g = s.add.graphics();
+  g.fillStyle(0x000000, 0.35); g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, radius); // тень
+  g.fillGradientStyle(shade(color, 1.22), shade(color, 1.22), color, color, 1);
+  g.fillRoundedRect(-w / 2, -h / 2, w, h, radius);
+  g.fillStyle(0xffffff, 0.1); g.fillRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, h * 0.4, radius - 2); // блик
+  g.lineStyle(2, shade(color, 0.6)); g.strokeRoundedRect(-w / 2, -h / 2, w, h, radius);
+  c.add(g);
+  return c;
+}
+
+/** Маленькая «плашка» под значение внутри карточки (награда, характеристики). */
+export function chip(s: Phaser.Scene, x: number, y: number, w: number, h: number,
+  label: string, color = '#ffe066', bg = 0x1d1536): Phaser.GameObjects.Container {
+  const c = s.add.container(x, y);
+  const g = s.add.graphics();
+  g.fillStyle(bg, 0.85); g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2);
+  const t = s.add.text(0, 0, label, { fontFamily: FONT, fontSize: `${Math.round(h * 0.62)}px`, color, fontStyle: '700' }).setOrigin(0.5);
+  c.add([g, t]);
+  return c;
+}
+
 /** Полноэкранная модалка: тёмный фон блокирует ввод, шапка, ✕ и кнопка «Закрыть». */
 export function panel(s: Phaser.Scene, title: string, onClose?: () => void): Phaser.GameObjects.Container {
   const root = s.add.container(0, 0).setDepth(50);
