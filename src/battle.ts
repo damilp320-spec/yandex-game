@@ -5,7 +5,7 @@
 import Phaser from 'phaser';
 import { W, H, CHAINS, FONT } from './config';
 import { textureKey } from './sprites';
-import { unitStats, AttackType } from './arena';
+import { unitStats, attackPlan, statScale, rollDamage, AttackType, TICK_MS } from './arena';
 import { jingleFanfare, failSound, clickSound } from './audio';
 import { button } from './ui';
 import { t } from './i18n';
@@ -28,8 +28,9 @@ export function startBattle(
   root.add(scene.add.text(W / 2, 60, t('battle.vs', { name: enemyName }), { fontFamily: FONT, fontSize: '32px', color: '#ffe066', fontStyle: '800' }).setOrigin(0.5));
 
   const fighters: Fighter[] = [];
-  const mkFighter = (ch: number, lv: number, side: 0 | 1, i: number, factor: number) => {
+  const mkFighter = (ch: number, lv: number, side: 0 | 1, i: number, powerFactor: number) => {
     const st = unitStats(ch, lv, side === 0);
+    const factor = statScale(powerFactor); // множитель силы → множитель характеристики
     const x = side === 0 ? 170 : W - 170, y = 200 + i * 190;
     const obj = scene.add.container(x, y);
     const img = scene.add.image(0, 0, textureKey(ch, lv)).setDisplaySize(120, 120);
@@ -73,29 +74,29 @@ export function startBattle(
   }
 
   function attack(f: Fighter) {
-    const foes = fighters.filter(x => x.side !== f.side && x.alive);
-    if (!foes.length) return;
+    // Выбор цели и урон — общие правила из arena.ts (по ним же считает симуляция).
+    const plan = attackPlan(f, fighters);
+    if (!plan) return;
+    const { targets, dmg } = plan;
     const dir = f.side === 0 ? 1 : -1;
     if (f.type === 'melee') {
-      const target = foes[0];
-      scene.tweens.add({ targets: f.obj, x: f.obj.x + dir * 55, duration: 130, yoyo: true, onYoyo: () => hit(target, f.dmg) });
+      const target = targets[0];
+      scene.tweens.add({ targets: f.obj, x: f.obj.x + dir * 55, duration: 130, yoyo: true, onYoyo: () => hit(target, rollDamage(dmg)) });
     } else {
-      const targets = f.type === 'splash' ? foes : [foes.reduce((a, b) => (a.hp < b.hp ? a : b))];
-      const dmg = f.type === 'splash' ? Math.max(1, Math.round(f.dmg * 0.45)) : f.dmg;
       targets.forEach(target => {
         const p = scene.add.circle(f.obj.x + dir * 50, f.obj.y, 9, (CHAINS[f.chain] ?? { color: 0xffe066 }).color).setDepth(74);
-        scene.tweens.add({ targets: p, x: target.obj.x, y: target.obj.y, duration: 220, onComplete: () => { p.destroy(); hit(target, dmg); } });
+        scene.tweens.add({ targets: p, x: target.obj.x, y: target.obj.y, duration: 220, onComplete: () => { p.destroy(); hit(target, rollDamage(dmg)); } });
       });
       clickSound(2);
     }
   }
 
   const timer = scene.time.addEvent({
-    delay: 100, loop: true, callback: () => {
+    delay: TICK_MS, loop: true, callback: () => {
       if (over) return;
       fighters.forEach(f => {
         if (!f.alive) return;
-        f.next -= 100;
+        f.next -= TICK_MS;
         if (f.next <= 0) { f.next = f.spd; attack(f); }
       });
     },

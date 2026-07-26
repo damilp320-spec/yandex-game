@@ -26,8 +26,13 @@ export const INCOME = {
   boostGemMult: 3, boostGemMs: 600_000,  // буст за кристаллы
 };
 
-// Покупка существ — цена растёт как в кликерах.
-export const SPAWN = { baseCost: 25, growth: 1.13 };
+// Покупка существ — цена растёт как в кликерах, но с потолком: без него (был рост
+// 1.13 без ограничения) к 14-му дню существо стоило 440k при доходе 180/мин, и
+// кнопка покупки становилась мёртвой — проверено scripts/sim.ts.
+export const SPAWN = { baseCost: 25, growth: 1.07, maxCost: 3000 };
+
+export const spawnCostOf = (bought: number) =>
+  Math.min(SPAWN.maxCost, Math.floor(SPAWN.baseCost * Math.pow(SPAWN.growth, bought)));
 
 // «Золотой брейнрот» пролетает по экрану — тап даёт 2 минуты дохода разом.
 export const GOLDEN = { intervalMs: 90_000, lifeMs: 8000, rewardSec: 120, minReward: 100 };

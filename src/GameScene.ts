@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, SPAWN, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
-import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, EnemyTeam } from './arena';
+import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, REMATCH_BUFF, EnemyTeam } from './arena';
 import { startBattle } from './battle';
 import { track } from './analytics';
 import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek, resetProgress } from './state';
@@ -81,7 +81,8 @@ export class GameScene extends Phaser.Scene {
     this.drawHud();
     this.makeOrders();
 
-    if (!hadSave && S.zone === 0) this.startFtue();
+    // Туториал также после сброса прогресса: иначе игрок остаётся с пустым полем.
+    if ((!hadSave || !S.itemsZ[0]?.length) && S.zone === 0) this.startFtue();
     else (S.itemsZ[S.zone] ?? []).forEach(([r, c, ch, lv]) => {
       // Существа закончившегося события конвертируются в монеты — ничего не пропадает.
       if (ch >= CHAINS.length && !this.evCfg) { S.coins += 100 * (lv + 1); return; }
@@ -468,7 +469,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private spawnCost(): number { return Math.floor(SPAWN.baseCost * Math.pow(SPAWN.growth, S.spawnBought)); }
+  private spawnCost(): number { return spawnCostOf(S.spawnBought); }
 
   private refreshHud() {
     this.coinsText.setText(`${S.coins}`);
@@ -803,8 +804,8 @@ export class GameScene extends Phaser.Scene {
     if (win && S.wins % 3 === 0) rollChest(this.api, this, W / 2, H / 2 - 100);
     this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 380, 72, t('arena.again'), 0x9d2e4d, () => { p.destroy(); this.startArenaBattle(1); }, 24));
     if (!win)
-      this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 460, 66, t('arena.rematch'), 0x2e7d5b, () =>
-        sdk.showRewarded(() => { p.destroy(); this.startArenaBattle(1.2, en); }), 21));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 460, 66, t('arena.rematch', { buff: REMATCH_BUFF }), 0x2e7d5b, () =>
+        sdk.showRewarded(() => { p.destroy(); this.startArenaBattle(REMATCH_BUFF, en); }), 21));
     if (S.ordersDone > 0 && interstitialAllowed()) sdk.maybeInterstitial(); // естественный стык
   }
 

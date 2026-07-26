@@ -76,6 +76,7 @@ export function openShop(s: Phaser.Scene, api: ShopApi) {
     root.add(button(s, W / 2, y, 600, 74, bought ? `✅ ${title}` : `${title}\n${t(`p.${p.id}.desc`)}`, bought ? 0x3a3a55 : 0x5a48a8, async () => {
       if (bought) return;
       if (await sdk.purchase(p.id, p.consumable)) { p.grant(); tada(); track(`purchase_${p.id}`); api.refreshHud(); persist(true); root.destroy(); }
+      else { failSound(); toast(s, W / 2, H / 2, t('shop.failed'), '#ff7070'); } // отказ/отмена платежа
     }, 22));
     y += 88;
   }
