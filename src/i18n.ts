@@ -53,6 +53,8 @@ const RU: Record<string, string> = {
 
   'order.label': 'Ролик с:\n{name}\n🪙 {reward}',
   'order.missing': 'Нет такого существа',
+  'order.chest': '📦 Пятый заказ — сундук!',
+  'order.progress': 'до сундука: {n}',
   'golden.tap': '✨ ЗОЛОТОЙ! +{n}🪙',
 
   'pedia.title': '📖 Мемпедия {found}/{total}',
@@ -224,6 +226,8 @@ const EN: Record<string, string> = {
 
   'order.label': 'Video with:\n{name}\n🪙 {reward}',
   'order.missing': 'No such creature',
+  'order.chest': '📦 Fifth order — a chest!',
+  'order.progress': 'to chest: {n}',
   'golden.tap': '✨ GOLDEN! +{n}🪙',
 
   'pedia.title': '📖 Mempedia {found}/{total}',
@@ -395,6 +399,8 @@ const TR: Record<string, string> = {
 
   'order.label': 'Video:\n{name}\n🪙 {reward}',
   'order.missing': 'Böyle bir yaratık yok',
+  'order.chest': '📦 Beşinci sipariş — sandık!',
+  'order.progress': 'sandığa: {n}',
   'golden.tap': '✨ ALTIN! +{n}🪙',
 
   'pedia.title': '📖 Mempedi {found}/{total}',

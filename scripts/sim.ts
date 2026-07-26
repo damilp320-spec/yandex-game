@@ -10,9 +10,24 @@
 //   бесплатное существо по кулдауну GEN.cooldownMs (одна кнопка, «умный» рандом),
 //   покупка существ пока хватает монет с запасом, жадные слияния,
 //   до 2 заказов в минуту (если на поле есть подходящее существо).
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, ORDER_REWARD_BY_LEVEL, incomeOf } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, orderReward, ORDER_CHEST_EVERY, incomeOf } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE } from '../src/arena';
 import { S } from '../src/state';
+
+/**
+ * Детерминированный ГПСЧ (mulberry32) вместо Math.random: один и тот же конфиг
+ * должен давать один и тот же отчёт. Без этого шум между прогонами путают с
+ * эффектом правки — «легендарка на 1-й день» и «на 4-й» встречались при одинаковом
+ * балансе. Поменял SEED — получил другую, но столь же воспроизводимую партию.
+ */
+const SEED = 20260726;
+let rngState = SEED;
+Math.random = () => {
+  rngState = (rngState + 0x6d2b79f5) | 0;
+  let t = Math.imul(rngState ^ (rngState >>> 15), 1 | rngState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
 
 const DAYS = 14;
 const SESSIONS_PER_DAY = 3;
@@ -99,9 +114,17 @@ class Sim {
     const idx = this.board.findIndex((c, i) =>
       c.level === level && !this.board.some((o, j) => j !== i && o.chain === c.chain && o.level === c.level));
     if (idx < 0) return false;
-    this.board.splice(idx, 1);
-    this.coins += ORDER_REWARD_BY_LEVEL[level];
+    const [sold] = this.board.splice(idx, 1);
+    this.coins += orderReward(sold.chain, level);
     this.orders++;
+    // Каждый N-й заказ даёт сундук. Уровни те же, что в rollChest (src/shop.ts).
+    if (this.orders % ORDER_CHEST_EVERY === 0 && this.board.length < this.capacity) {
+      const r = Math.random();
+      this.board.push({
+        chain: CHAINS_OF_ZONE[Math.floor(Math.random() * CHAINS_OF_ZONE.length)],
+        level: r < 0.2 ? 4 : r < 0.55 ? 3 : 2,
+      });
+    }
     return true;
   }
 
@@ -146,12 +169,14 @@ const sim = new Sim();
 // стартовые два существа как в FTUE
 sim.board.push({ chain: 0, level: 0 }, { chain: 0, level: 0 });
 const daily: { day: number; income: number; cost: number; tapShare: number }[] = [];
+let legendaryDay = 0; // день, когда впервые появилось существо 6-го уровня
 for (let day = 1; day <= DAYS; day++) {
   const beforeTaps = sim.taps;
   for (let s = 0; s < SESSIONS_PER_DAY; s++) {
     for (let m = 0; m < MINUTES_PER_SESSION; m++) sim.activeMinute();
     sim.offline(s < SESSIONS_PER_DAY - 1 ? 4 : 12); // между сессиями и ночь
   }
+  if (!legendaryDay && sim.bestLevel >= 6) legendaryDay = day;
   const inc = sim.income;
   const perMin = inc * (60_000 / INCOME.periodMs);
   const tapPerMin = sim.board.length
@@ -173,6 +198,8 @@ console.log('\nпроверки экономики:');
 const affordable = last.cost <= last.income * 10 || sim.coins > last.cost * 20;
 console.log(`  • цена существа vs доход: ${affordable ? 'OK' : 'ПЛОХО'} ` +
   `(цена ${fmt(last.cost)}; доход ${fmt(last.income)}/мин; на руках ${fmt(sim.coins)})`);
+console.log(`  • первая легендарка (6 ур.): ${legendaryDay ? `день ${legendaryDay}` : 'не достигнута за 14 дней'} ` +
+  `${legendaryDay >= 3 && legendaryDay <= 7 ? '— OK' : '— проверь: цель 3–7 день'}`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +
   `${last.tapShare > 5 ? '— ПЛОХО: тапы обесценивают пассивный доход и офлайн' : '— OK'}`);
 

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, orderReward, ORDER_CHEST_EVERY, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -39,6 +39,7 @@ export class GameScene extends Phaser.Scene {
   private tipBanner?: Phaser.GameObjects.Container;
   private mergeHints?: Phaser.GameObjects.Graphics;
   private orderBar!: Phaser.GameObjects.Container;
+  private chestChipText?: Phaser.GameObjects.Text;
   private ev: EventDef | null = null;
   private evCfg?: Chain;
   private api: ShopApi = {
@@ -642,6 +643,10 @@ export class GameScene extends Phaser.Scene {
     g.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
     g.lineStyle(2, 0x5a48a8, 0.9); g.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
     this.orderBar.add(g);
+    // Счётчик до сундука на кромке полосы: стимул сдавать виден постоянно.
+    const chip = ui.chip(this, 0, -h / 2 - 2, 104, 26, '', '#ffd07a', 0x2a1f4d);
+    this.chestChipText = chip.list[1] as Phaser.GameObjects.Text;
+    this.orderBar.add(chip);
   }
 
   /** Слот заказа внутри полосы: портрет, имя, награда и подсветка «можно сдать». */
@@ -661,7 +666,7 @@ export class GameScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '14px', color: '#fff', fontStyle: '600',
       align: 'center', wordWrap: { width: 140 }, lineSpacing: -3,
     }).setOrigin(0.5));
-    c.add(this.add.text(14, 16, `🪙 ${ORDER_REWARD_BY_LEVEL[level]}`, {
+    c.add(this.add.text(14, 16, `🪙 ${orderReward(chain, level)}`, {
       fontFamily: FONT, fontSize: '15px', color: '#ffe066', fontStyle: '700',
     }).setOrigin(0.5));
     const hit = this.add.rectangle(0, 0, sw - 6, ORDER_BAR.h - 8, 0xffffff, 0.001).setInteractive();
@@ -681,6 +686,7 @@ export class GameScene extends Phaser.Scene {
       const has = this.grid.some(row => row.some(it => it && it.chain === o.chain && it.level === o.level));
       o.obj.setAlpha(has ? 1 : 0.42);
     });
+    this.chestChipText?.setText(`📦 ${t('order.progress', { n: ORDER_CHEST_EVERY - (S.ordersDone % ORDER_CHEST_EVERY) })}`);
   }
 
   /** Сдача заказа перетаскиванием: существо брошено на полосу заказов. */
@@ -703,12 +709,18 @@ export class GameScene extends Phaser.Scene {
       const it = this.grid[r][c];
       if (it && it.chain === o.chain && it.level === o.level) {
         it.obj.destroy(); this.grid[r][c] = null;
-        S.coins += ORDER_REWARD_BY_LEVEL[o.level];
+        const reward = orderReward(o.chain, o.level);
+        S.coins += reward;
         S.ordersDone++; S.quests.progress.orders++; S.score += o.level * 3;
         jingleOrder();
         track('order_done');
-        ui.toast(this, o.obj.x, o.obj.y, `+${ORDER_REWARD_BY_LEVEL[o.level]}🪙`);
+        ui.toast(this, o.obj.x, o.obj.y + 50, `+${reward}🪙`);
         this.newOrder(slot);
+        // Каждый N-й заказ — сундук: причина сдавать даже когда монеты не нужны.
+        if (S.ordersDone % ORDER_CHEST_EVERY === 0) {
+          ui.toast(this, W / 2, ORDER_BAR.y + 90, t('order.chest'));
+          rollChest(this.api, this, W / 2, ORDER_BAR.y + 140);
+        }
         // Естественный стык для interstitial (капы в sdk.ts, отключаемо покупкой).
         if (S.ordersDone % INTERSTITIAL.everyNOrders === 0 && interstitialAllowed()) sdk.maybeInterstitial();
         this.refreshHud(); this.persistBoard();
