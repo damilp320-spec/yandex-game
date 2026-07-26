@@ -2,8 +2,10 @@ import Phaser from 'phaser';
 import { W, H } from './config';
 import { GameScene } from './GameScene';
 import { initSDK } from './sdk';
+import { initMetrica } from './analytics';
 
 (async () => {
+  initMetrica();
   await initSDK();
   new Phaser.Game({
     type: Phaser.AUTO,

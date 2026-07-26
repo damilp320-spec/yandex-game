@@ -2,6 +2,9 @@
 export const W = 720;
 export const H = 1280;
 
+// Номер счётчика Яндекс.Метрики; 0 = выключено (события уходят в консоль).
+export const METRICA_ID = 0;
+
 // 7-й ряд (index 6) заперт до покупки — мягкое «space pressure» (PLAN.md §16).
 export const GRID = { cols: 6, rows: 7, cell: 104, x: 48, y: 366 };
 
@@ -26,6 +29,15 @@ export const CHAINS: Chain[] = [
   { id: 'croc', color: 0x5fae57, names: ['Икринка', 'Крокодятко', 'Крокодино', 'Авиакрокодило', 'Бомбандино', 'Мега Крокодиссимо'] },
   { id: 'shark', color: 0x5a8fd8, names: ['Малёк', 'Акулёнок', 'Тралалино', 'Акула-Баллерина', 'Мегалодино', 'Гранд Тралалиссимо'] },
   { id: 'drum', color: 0xb85ad0, names: ['Щепка', 'Колотушка', 'Тук-Тукано', 'Барабандо', 'Ночной Барабандиссимо', 'Сахарандо Легендо'] },
+  { id: 'cat', color: 0xe07a9e, names: ['Котёнок Митя', 'Кото-Битик', 'Мяу-Диджейно', 'Кот Диско-Фонио', 'Мега Мяумикс', 'Легендо Котофоно'] },
+  { id: 'robot', color: 0x58c0a8, names: ['Болтик', 'Робо-Крошка', 'Битбокс-3000', 'Робо-Балерино', 'Гига-Данцато', 'Праймо Роботиссимо'] },
+];
+
+// Локации: своя четвёрка/пара цепочек, свой фон. Переключение — через карту.
+export interface Zone { id: string; title: string; bg: string; chains: number[]; unlockCoins: number; unlockGems: number }
+export const ZONES: Zone[] = [
+  { id: 'lab', title: 'Лаборатория', bg: '#1a1230', chains: [0, 1, 2, 3], unlockCoins: 0, unlockGems: 0 },
+  { id: 'club', title: 'Неон-Клуб', bg: '#0d1a2e', chains: [4, 5], unlockCoins: 10000, unlockGems: 200 },
 ];
 
 export const RARITY = [

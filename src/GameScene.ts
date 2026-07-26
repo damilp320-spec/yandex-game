@@ -1,23 +1,25 @@
 import Phaser from 'phaser';
-import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain } from './config';
+import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
+import { track } from './analytics';
 import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
-import { popSound, coinSound, failSound, tada } from './audio';
+import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, failSound, tada } from './audio';
 import { openShop, ShopApi } from './shop';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
 interface Order { chain: number; level: number; text: Phaser.GameObjects.Text }
 
 export class GameScene extends Phaser.Scene {
+  private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
   private grid: (Item | null)[][] = [];
   private orders: Order[] = [];
+  private genEntries: { chain: number; text: Phaser.GameObjects.Text }[] = [];
   private coinsText!: Phaser.GameObjects.Text;
   private gemsText!: Phaser.GameObjects.Text;
   private energyText!: Phaser.GameObjects.Text;
-  private genTexts: Phaser.GameObjects.Text[] = [];
   private questBadge!: Phaser.GameObjects.Arc;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
@@ -32,7 +34,10 @@ export class GameScene extends Phaser.Scene {
 
   async create() {
     this.grid = Array.from({ length: GRID.rows }, () => Array(GRID.cols).fill(null));
+    this.orders = [];
+    this.genEntries = [];
     const hadSave = await restore();
+    this.cameras.main.setBackgroundColor(ZONES[S.zone].bg);
     for (const id of await sdk.restorePurchases()) {
       if (id === 'no_ads') S.noAds = true;
       if (id === 'starter') S.starterBought = true;
@@ -51,16 +56,19 @@ export class GameScene extends Phaser.Scene {
     this.drawHud();
     this.makeOrders();
 
-    if (hadSave) S.items.forEach(([r, c, ch, lv]) => {
+    if (!hadSave && S.zone === 0) this.startFtue();
+    else (S.itemsZ[S.zone] ?? []).forEach(([r, c, ch, lv]) => {
       // Существа закончившегося события конвертируются в монеты — ничего не пропадает.
       if (ch >= CHAINS.length && !this.evCfg) { S.coins += 100 * (lv + 1); return; }
       this.spawnItem(ch, lv, r, c, true);
     });
-    else this.startFtue();
 
-    const st = streakStatus();
-    if (st) this.streakPanel(st, () => this.offlinePopup());
-    else this.offlinePopup();
+    if (!GameScene.popupsShown) {
+      GameScene.popupsShown = true;
+      const st = streakStatus();
+      if (st) this.streakPanel(st, () => this.offlinePopup());
+      else this.offlinePopup();
+    }
     sdk.gameplayStart();
 
     this.time.addEvent({ delay: ENERGY.regenMs, loop: true, callback: () => { S.energy = Math.min(ENERGY.max, S.energy + 1); this.refreshHud(); } });
@@ -123,7 +131,7 @@ export class GameScene extends Phaser.Scene {
   private spawnItem(chain: number, level: number, r: number, c: number, silent = false) {
     const { x, y } = this.cellXY(r, c);
     const box = this.add.container(x, y);
-    const img = this.add.image(0, 0, textureKey(chain, level));
+    const img = this.add.image(0, 0, textureKey(chain, level)).setDisplaySize(94, 94);
     const badge = this.add.text(32, 32, `${level + 1}`, { fontSize: '18px', color: RARITY[level].color, fontStyle: 'bold' }).setOrigin(0.5);
     box.add([img, badge]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
     const item: Item = { chain, level, obj: box };
@@ -140,7 +148,7 @@ export class GameScene extends Phaser.Scene {
     if (silent) return;
     const coins = 25 * (level + 1), gems = level >= 4 ? 5 : 0;
     S.coins += coins; S.gems += gems;
-    tada();
+    jingleDiscovery();
     ui.toast(this, W / 2, GRID.y + 80, `📖 Открыто: ${CHAINS[chain].names[level]}! +${coins}🪙${gems ? ` +${gems}💎` : ''}`);
     this.refreshHud();
   }
@@ -175,9 +183,10 @@ export class GameScene extends Phaser.Scene {
     a.obj.destroy(); b.obj.destroy();
     const level = a.level + 1;
     this.spawnItem(a.chain, level, ...at);
-    popSound(level);
+    jingleMerge(level, a.chain);
     S.quests.progress.merges++;
     S.score += level * 2;
+    if (level >= 4) track('merge_high', { level });
     if (a.chain === EVENT_CHAIN_INDEX && this.ev) {
       S.event.points += level * 2;
       ui.toast(this, W / 2, GRID.y + 140, `${this.ev.emoji} +${level * 2} очков события`);
@@ -190,31 +199,32 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- генераторы ----------
   private drawGenerators() {
-    CHAINS.forEach((cfg, i) => {
-      const x = 120 + i * 160, y = 308;
-      this.add.circle(x, y, 34, 0x2a1f4d).setStrokeStyle(3, cfg.color);
-      const icon = this.add.image(x, y, textureKey(i, 0)).setScale(0.62).setInteractive();
-      this.genTexts.push(this.add.text(x, y + 42, '', { fontSize: '18px', color: '#7fdcff' }).setOrigin(0.5));
-      icon.on('pointerdown', () => this.tapGenerator(i));
+    const chains = ZONES[S.zone].chains;
+    chains.forEach((ch, i) => {
+      const x = W / 2 - (chains.length - 1) * 80 + i * 160, y = 308;
+      this.add.circle(x, y, 34, 0x2a1f4d).setStrokeStyle(3, CHAINS[ch].color);
+      const icon = this.add.image(x, y, textureKey(ch, 0)).setDisplaySize(58, 58).setInteractive();
+      this.genEntries.push({ chain: ch, text: this.add.text(x, y + 44, '', { fontSize: '18px', color: '#7fdcff' }).setOrigin(0.5) });
+      icon.on('pointerdown', () => this.tapGenerator(ch));
     });
     this.tickGenerators();
   }
 
-  private tapGenerator(i: number) {
-    const left = GEN.cooldownMs - (Date.now() - S.genLast[i]);
-    if (left > 0) { failSound(); ui.toast(this, 120 + i * 160, 260, `Ещё ${Math.ceil(left / 1000)} с`, '#ff7070'); return; }
+  private tapGenerator(ch: number) {
+    const left = GEN.cooldownMs - (Date.now() - S.genLast[ch]);
+    if (left > 0) { failSound(); ui.toast(this, W / 2, 260, `Ещё ${Math.ceil(left / 1000)} с`, '#ff7070'); return; }
     const cell = this.findEmpty();
     if (!cell) { failSound(); ui.toast(this, W / 2, 260, 'Поле заполнено!', '#ff7070'); return; }
-    S.genLast[i] = Date.now();
-    this.spawnItem(i, 0, ...cell);
+    S.genLast[ch] = Date.now();
+    this.spawnItem(ch, 0, ...cell);
     S.quests.progress.spawns++;
     this.refreshHud();
   }
 
   private tickGenerators() {
-    this.genTexts.forEach((t, i) => {
-      const left = GEN.cooldownMs - (Date.now() - S.genLast[i]);
-      t.setText(left > 0 ? `${Math.ceil(left / 1000)}с` : 'ГОТОВ').setColor(left > 0 ? '#8f86b8' : '#7fdcff');
+    this.genEntries.forEach(({ chain, text }) => {
+      const left = GEN.cooldownMs - (Date.now() - S.genLast[chain]);
+      text.setText(left > 0 ? `${Math.ceil(left / 1000)}с` : 'ГОТОВ').setColor(left > 0 ? '#8f86b8' : '#7fdcff');
     });
   }
 
@@ -222,7 +232,8 @@ export class GameScene extends Phaser.Scene {
   private drawHud() {
     this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontSize: '38px', color: '#ffe066', fontStyle: 'bold' }).setOrigin(0.5);
     if (this.ev)
-      ui.button(this, W / 2, 134, 340, 44, `${this.ev.emoji} ${this.ev.title} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 20);
+      ui.button(this, 250, 134, 380, 44, `${this.ev.emoji} ${this.ev.title} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 20);
+    ui.button(this, 590, 134, 220, 44, `🗺️ ${ZONES[S.zone].title}`, 0x2e6d9d, () => this.zonesPanel(), 19);
     this.coinsText = this.add.text(40, 86, '', { fontSize: '30px', color: '#fff' });
     this.gemsText = this.add.text(260, 86, '', { fontSize: '30px', color: '#c9a6ff' });
     this.energyText = this.add.text(460, 86, '', { fontSize: '30px', color: '#7fdcff' });
@@ -252,8 +263,8 @@ export class GameScene extends Phaser.Scene {
     const cell = this.findEmpty();
     if (!cell) { failSound(); ui.toast(this, W / 2, 1160, 'Поле заполнено!', '#ff7070'); return; }
     S.energy -= ENERGY.spawnCost;
-    // Во время события 25% новых существ — событийные.
-    const chain = this.evCfg && Math.random() < 0.25 ? EVENT_CHAIN_INDEX : Phaser.Math.Between(0, CHAINS.length - 1);
+    // Во время события 25% новых существ — событийные; остальные — из цепочек локации.
+    const chain = this.evCfg && Math.random() < 0.25 ? EVENT_CHAIN_INDEX : (Phaser.Math.RND.pick(ZONES[S.zone].chains) as number);
     this.spawnItem(chain, 0, ...cell);
     S.quests.progress.spawns++;
     this.refreshHud();
@@ -262,7 +273,7 @@ export class GameScene extends Phaser.Scene {
   private spawnReward(level: number): boolean {
     const cell = this.findEmpty();
     if (!cell) return false;
-    this.spawnItem(Phaser.Math.Between(0, CHAINS.length - 1), Math.min(level, 5), ...cell);
+    this.spawnItem(Phaser.Math.RND.pick(ZONES[S.zone].chains) as number, Math.min(level, 5), ...cell);
     this.persistBoard();
     return true;
   }
@@ -271,11 +282,12 @@ export class GameScene extends Phaser.Scene {
   private makeOrders() { for (let i = 0; i < 3; i++) this.newOrder(i); }
 
   private newOrder(slot: number) {
-    // Сложность растёт с прогрессом: заказы не выше уже открытых уровней (+1 на вырост).
+    // Сложность растёт с прогрессом: заказы не выше уже открытых уровней локации (+1 на вырост).
+    const pool = ZONES[S.zone].chains;
     let maxLv = 1;
-    S.discovered.forEach(arr => arr.forEach((d, lv) => { if (d) maxLv = Math.max(maxLv, lv); }));
+    pool.forEach(ch => S.discovered[ch].forEach((d, lv) => { if (d) maxLv = Math.max(maxLv, lv); }));
     const level = Phaser.Math.Between(1, Math.min(4, maxLv + 1));
-    const chain = Phaser.Math.Between(0, CHAINS.length - 1);
+    const chain = Phaser.Math.RND.pick(pool) as number;
     this.orders[slot]?.text.destroy();
     const text = this.add.text(130 + slot * 230, 200, `Ролик с:\n${CHAINS[chain].names[level]}\n🪙 ${ORDER_REWARD_BY_LEVEL[level]}`,
       { fontSize: '21px', color: '#fff', backgroundColor: '#3d2f6e', padding: { x: 10, y: 8 }, align: 'center' })
@@ -292,7 +304,8 @@ export class GameScene extends Phaser.Scene {
         it.obj.destroy(); this.grid[r][c] = null;
         S.coins += ORDER_REWARD_BY_LEVEL[o.level];
         S.ordersDone++; S.quests.progress.orders++; S.score += o.level * 3;
-        coinSound();
+        jingleOrder();
+        track('order_done');
         ui.toast(this, o.text.x, o.text.y, `+${ORDER_REWARD_BY_LEVEL[o.level]}🪙`);
         this.newOrder(slot);
         // Естественный стык для interstitial (капы в sdk.ts, отключаемо покупкой).
@@ -322,7 +335,8 @@ export class GameScene extends Phaser.Scene {
       S.coins += rw.coins ?? 0; S.gems += rw.gems ?? 0;
       if (rw.chest) this.spawnReward(4);
       S.streakDay = day; S.streakLast = today();
-      tada(); this.refreshHud(); persist(true); p.destroy(); onDone();
+      tada(); track('daily_claim', { day });
+      this.refreshHud(); persist(true); p.destroy(); onDone();
     };
     if (mode === 'claim') {
       this.addTo(p, ui.button(this, W / 2, H / 2, 420, 76, `Забрать бонус дня ${nextDay}!`, 0x2e7d5b, () => claim(nextDay)));
@@ -355,6 +369,38 @@ export class GameScene extends Phaser.Scene {
     this.addTo(p, this.add.text(W / 2, H / 2 + 260, 'Новые задания — каждый день!', { fontSize: '24px', color: '#8f86b8' }).setOrigin(0.5));
   }
 
+  // ---------- локации ----------
+  private zonesPanel() {
+    const p = ui.panel(this, '🗺️ Локации');
+    ZONES.forEach((z, i) => {
+      const y = H / 2 - 250 + i * 170;
+      const label = `${z.title}\n${z.chains.length} цепочки существ`;
+      if (S.zoneUnlocked[i]) {
+        this.addTo(p, ui.button(this, W / 2, y, 520, 120, i === S.zone ? `📍 ${label}` : label, i === S.zone ? 0x2e7d5b : 0x5a48a8,
+          () => { if (i !== S.zone) this.switchZone(i); }));
+      } else {
+        this.addTo(p, ui.button(this, W / 2, y, 520, 120, `🔒 ${label}\nОткрыть: ${z.unlockCoins}🪙 или ${z.unlockGems}💎`, 0x3a3a55, () => {
+          if (S.coins >= z.unlockCoins) S.coins -= z.unlockCoins;
+          else if (S.gems >= z.unlockGems) S.gems -= z.unlockGems;
+          else { failSound(); ui.toast(this, W / 2, y, 'Не хватает средств', '#ff7070'); return; }
+          S.zoneUnlocked[i] = true;
+          // стартовые существа новой локации — чтобы было что сливать сразу
+          S.itemsZ[i] = [[2, 2, z.chains[0], 0], [2, 3, z.chains[0], 0], [3, 2, z.chains[1] ?? z.chains[0], 0], [3, 3, z.chains[1] ?? z.chains[0], 0]];
+          jingleFanfare();
+          track('zone_unlock', { zone: z.id });
+          this.switchZone(i);
+        }, 22));
+      }
+    });
+  }
+
+  private switchZone(i: number) {
+    this.persistBoard(true);
+    S.zone = i;
+    persist(true);
+    this.scene.restart();
+  }
+
   // ---------- сезонное событие ----------
   private eventPanel() {
     const ev = this.ev!;
@@ -372,7 +418,8 @@ export class GameScene extends Phaser.Scene {
         this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, 'Забрать', 0x2e7d5b, () => {
           S.event.claimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
           if (m.chest) this.spawnReward(4);
-          tada(); this.refreshHud(); persist(true); p.destroy(); this.eventPanel();
+          jingleFanfare(); track('event_milestone', { points: m.points });
+          this.refreshHud(); persist(true); p.destroy(); this.eventPanel();
         }));
     });
     this.addTo(p, this.add.text(W / 2, H / 2 + 300, 'Когда событие закончится, его существа\nпревратятся в монеты — ничего не пропадёт!', { fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
@@ -380,16 +427,17 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- Мемпедия ----------
   private memePanel() {
-    const total = CHAINS.length * CHAINS[0].names.length;
+    const total = CHAINS.reduce((n, ch) => n + ch.names.length, 0);
     const found = S.discovered.flat().filter(Boolean).length;
     const p = ui.panel(this, `📖 Мемпедия ${found}/${total}`);
+    const step = 600 / CHAINS.length;
     CHAINS.forEach((cfg, ci) => {
-      const x = W / 2 - 240 + ci * 160;
-      this.addTo(p, this.add.circle(x, H / 2 - 330, 18, cfg.color));
+      const x = W / 2 - 300 + step / 2 + ci * step;
+      this.addTo(p, this.add.image(x, H / 2 - 330, textureKey(ci, 0)).setDisplaySize(52, 52));
       cfg.names.forEach((name, lv) => {
         const known = S.discovered[ci][lv];
-        this.addTo(p, this.add.text(x, H / 2 - 280 + lv * 100, known ? name : '???',
-          { fontSize: '17px', color: known ? RARITY[lv].color : '#5a5474', align: 'center', wordWrap: { width: 150 } }).setOrigin(0.5));
+        this.addTo(p, this.add.text(x, H / 2 - 270 + lv * 95, known ? name : '???',
+          { fontSize: '15px', color: known ? RARITY[lv].color : '#5a5474', align: 'center', wordWrap: { width: step - 8 } }).setOrigin(0.5));
       });
     });
   }
@@ -413,7 +461,8 @@ export class GameScene extends Phaser.Scene {
   // ---------- офлайн-доход ----------
   private offlinePopup() {
     const hours = Math.min((Date.now() - S.lastSeen) / 3.6e6, OFFLINE.capHours);
-    const earned = Math.floor(hours * OFFLINE.coinsPerHour);
+    // Каждая открытая локация увеличивает офлайн-доход.
+    const earned = Math.floor(hours * OFFLINE.coinsPerHour * S.zoneUnlocked.filter(Boolean).length);
     if (earned < 5) return;
     const p = ui.panel(this, '💤 Пока вас не было…');
     this.addTo(p, this.add.text(W / 2, H / 2 - 200, `Существа заработали:\n🪙 ${earned}`, { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
@@ -437,7 +486,7 @@ export class GameScene extends Phaser.Scene {
     for (let r = 0; r < GRID.rows; r++) for (let c = 0; c < GRID.cols; c++) {
       const it = this.grid[r][c]; if (it) items.push([r, c, it.chain, it.level]);
     }
-    S.items = items;
+    S.itemsZ[S.zone] = items;
     persist(force);
   }
 }

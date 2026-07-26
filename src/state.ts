@@ -1,5 +1,5 @@
 // Центральное состояние игры + сериализация. Единственный источник правды для сейва.
-import { CHAINS, ENERGY } from './config';
+import { CHAINS, ENERGY, ZONES } from './config';
 import * as sdk from './sdk';
 
 export interface QuestDef { id: 'merges' | 'orders' | 'spawns'; label: string; target: number; coins: number; gems: number }
@@ -20,7 +20,9 @@ export const S = {
   gems: 0,
   energy: ENERGY.max,
   lastSeen: Date.now(),
-  items: [] as number[][], // [r, c, chain, level]
+  itemsZ: [[], []] as number[][][], // поле каждой локации: [r, c, chain, level]
+  zone: 0,
+  zoneUnlocked: [true, false],
   rowUnlocked: false,
   noAds: false,
   starterBought: false,
@@ -48,6 +50,11 @@ function ensureShapes() {
   while (S.discovered.length < CHAINS.length) S.discovered.push([]);
   S.discovered.forEach((arr, i) => { while (arr.length < CHAINS[i].names.length) arr.push(false); });
   while (S.genLast.length < CHAINS.length) S.genLast.push(0);
+  while (S.itemsZ.length < ZONES.length) S.itemsZ.push([]);
+  while (S.zoneUnlocked.length < ZONES.length) S.zoneUnlocked.push(false);
+  // Миграция старых сейвов: плоский items становится полем первой локации.
+  const legacy = (S as any).items as number[][] | undefined;
+  if (legacy?.length && !S.itemsZ.some(z => z.length)) S.itemsZ[0] = legacy;
 }
 
 export function resetDailies() {

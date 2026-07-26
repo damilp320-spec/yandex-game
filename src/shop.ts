@@ -4,6 +4,7 @@ import { W, H, PRICES, ENERGY } from './config';
 import { S, persist } from './state';
 import * as sdk from './sdk';
 import { button, panel, toast } from './ui';
+import { track } from './analytics';
 import { tada, coinSound, failSound } from './audio';
 
 export interface ShopApi {
@@ -64,7 +65,7 @@ export function openShop(s: Phaser.Scene, api: ShopApi) {
     const bought = p.once?.() ?? false;
     root.add(button(s, W / 2, y, 600, 74, bought ? `✅ ${p.title}` : `${p.title}\n${p.desc}`, bought ? 0x3a3a55 : 0x5a48a8, async () => {
       if (bought) return;
-      if (await sdk.purchase(p.id, p.consumable)) { p.grant(); tada(); api.refreshHud(); persist(true); root.destroy(); }
+      if (await sdk.purchase(p.id, p.consumable)) { p.grant(); tada(); track(`purchase_${p.id}`); api.refreshHud(); persist(true); root.destroy(); }
     }, 22));
     y += 88;
   }

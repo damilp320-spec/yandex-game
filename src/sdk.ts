@@ -2,6 +2,7 @@
 // Правила из PLAN.md §4-5: пауза игры на рекламе, награда только по onRewarded,
 // частотные капы interstitial, троттлинг сохранений, покупки через Payments API.
 import { INTERSTITIAL } from './config';
+import { track } from './analytics';
 
 type Dict = Record<string, unknown>;
 declare global { interface Window { YaGames?: { init(): Promise<any> } } }
@@ -30,6 +31,7 @@ export const gameplayStop = () => ysdk?.features?.GameplayAPI?.stop();
 
 /** Rewarded: onReward вызывается ТОЛЬКО по коллбеку onRewarded. */
 export function showRewarded(onReward: () => void, onClose?: () => void): void {
+  track('ad_rewarded');
   if (!ysdk) { onReward(); onClose?.(); return; } // мок: сразу награда
   gameplayStop();
   ysdk.adv.showRewardedVideo({
@@ -47,6 +49,7 @@ export function maybeInterstitial(): boolean {
   if (now - sessionStart < INTERSTITIAL.sessionWarmupMs) return false;
   if (now - lastInterstitial < INTERSTITIAL.minGapMs) return false;
   lastInterstitial = now;
+  track('ad_interstitial');
   if (!ysdk) { console.log('[mock] interstitial'); return true; }
   gameplayStop();
   ysdk.adv.showFullscreenAdv({ callbacks: { onClose: gameplayStart, onError: gameplayStart } });
