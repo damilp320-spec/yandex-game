@@ -9,9 +9,11 @@
 //   в активную минуту: 12 тиков дохода, TAPS_PER_MIN тапов со средним комбо,
 //   бесплатное существо по кулдауну GEN.cooldownMs (одна кнопка, «умный» рандом),
 //   покупка существ пока хватает монет с запасом, жадные слияния,
-//   до 2 заказов в минуту (если на поле есть подходящее существо).
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, orderReward, ORDER_CHEST_EVERY, incomeOf } from '../src/config';
-import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE } from '../src/arena';
+//   продажа «одиночек» когда поле почти забито (заказов больше нет),
+//   BATTLES_PER_SESSION боёв арены за сессию с ростом кубков, милстоунами и сундуками,
+//   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf } from '../src/config';
+import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
 /**
@@ -34,27 +36,36 @@ const SESSIONS_PER_DAY = 3;
 const MINUTES_PER_SESSION = 7;
 const TAPS_PER_MIN = 20;      // «спокойный» игрок, не автокликер
 const AVG_COMBO = 2.5;        // тапы в пределах 1.2 с подряд, но не идеально
-const ORDERS_PER_MIN = 2;
+const BATTLES_PER_SESSION = 4;
 // Главное ограничение merge-игры: игрок физически успевает ~20 действий в минуту
 // (перетаскивание, покупка, сдача заказа ≈ 3 с каждое). Без этого бюджета симуляция
 // показывает недостижимый идеал: легендарку на первый день и монеты в миллионах.
 const ACTIONS_PER_MIN = 20;
-const CHAINS_OF_ZONE = ZONES[0].chains;
+
 const MAX_LEVEL = 5;
 
 interface Cell { chain: number; level: number }
 
 class Sim {
   coins = 0;
+  zone = 0;   // у каждой локации своё поле, доход идёт только с текущей
   board: Cell[] = [];
   spawnBought = 0;
   merges = 0;
-  orders = 0;
+  sold = 0;
   rowUnlocked = false;
   taps = 0;
+  team: Cell[] = [];
+  cups = 0;
+  battles = 0;
+  wins = 0;
+  barracks = 0;
+  claimed: boolean[] = ARENA_MILESTONES.map(() => false);
+
+  get chains() { return ZONES[this.zone].chains; }
 
   get capacity() { return GRID.cols * (this.rowUnlocked ? GRID.rows : GRID.rows - 1); }
-  get spawnCost() { return spawnCostOf(this.spawnBought); }
+  get spawnCost() { return spawnCostOf(this.spawnBought, this.income * (60_000 / INCOME.periodMs)); }
   /** Доход поля за один тик (5 с). */
   get income() { return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level), 0); }
   /** Человеческий уровень лучшего существа (1..6); 0 — поле пустое. */
@@ -65,7 +76,7 @@ class Sim {
     if (this.board.length >= this.capacity || this.coins < this.spawnCost * 1.2) return false;
     this.coins -= this.spawnCost;
     this.spawnBought++;
-    this.board.push({ chain: CHAINS_OF_ZONE[Math.floor(Math.random() * CHAINS_OF_ZONE.length)], level: 0 });
+    this.board.push({ chain: this.chains[Math.floor(Math.random() * this.chains.length)], level: 0 });
     return true;
   }
 
@@ -80,11 +91,11 @@ class Sim {
     while (this.freeProgress >= 1) {
       this.freeProgress -= 1;
       if (this.board.length >= this.capacity) break;
-      const lonely = CHAINS_OF_ZONE.filter(ch =>
+      const lonely = this.chains.filter(ch =>
         this.board.filter(c => c.chain === ch && c.level === 0).length % 2 === 1);
       const ch = lonely.length && Math.random() < 0.7
         ? lonely[Math.floor(Math.random() * lonely.length)]
-        : CHAINS_OF_ZONE[Math.floor(Math.random() * CHAINS_OF_ZONE.length)];
+        : this.chains[Math.floor(Math.random() * this.chains.length)];
       this.board.push({ chain: ch, level: 0 });
     }
   }
@@ -106,26 +117,67 @@ class Sim {
     return true;
   }
 
-  /** Одна сдача заказа; false — если сдавать нечего. */
-  deliverOne(): boolean {
-    // Заказ на уровень 1..4. Разумный игрок отдаёт только «одиночку» — существо,
-    // которому не хватает пары для слияния; иначе прогресс по уровням встал бы.
-    const level = 1 + Math.floor(Math.random() * 4);
-    const idx = this.board.findIndex((c, i) =>
-      c.level === level && !this.board.some((o, j) => j !== i && o.chain === c.chain && o.level === c.level));
+  /**
+   * Продажа: игрок избавляется от «одиночки» — существа без пары для слияния, —
+   * и только когда место кончается. Держать выгоднее (доход вечен), поэтому продажа
+   * это способ освободить клетку, а не основной заработок.
+   */
+  sellOne(): boolean {
+    if (this.board.length < this.capacity - 1) return false;
+    let idx = -1, worst = Infinity;
+    this.board.forEach((c, i) => {
+      const lonely = !this.board.some((o, j) => j !== i && o.chain === c.chain && o.level === c.level);
+      const inc = incomeOf(c.chain, c.level);
+      if (lonely && inc < worst) { worst = inc; idx = i; }
+    });
     if (idx < 0) return false;
     const [sold] = this.board.splice(idx, 1);
-    this.coins += orderReward(sold.chain, level);
-    this.orders++;
-    // Каждый N-й заказ даёт сундук. Уровни те же, что в rollChest (src/shop.ts).
-    if (this.orders % ORDER_CHEST_EVERY === 0 && this.board.length < this.capacity) {
-      const r = Math.random();
-      this.board.push({
-        chain: CHAINS_OF_ZONE[Math.floor(Math.random() * CHAINS_OF_ZONE.length)],
-        level: r < 0.2 ? 4 : r < 0.55 ? 3 : 2,
+    this.coins += sellPrice(sold.chain, sold.level);
+    this.sold++;
+    return true;
+  }
+
+  /** Забрать пятёрку лучших с поля в команду арены — как игрок делает это один раз. */
+  draftTeam() {
+    while (this.team.length < 5 && this.board.length > 6) {
+      let bi = 0;
+      for (let i = 1; i < this.board.length; i++) if (this.board[i].level > this.board[bi].level) bi = i;
+      this.team.push(this.board.splice(bi, 1)[0]);
+    }
+  }
+
+  /** Бои арены: кубки, лига, милстоуны и сундуки за них. */
+  fightBattles(n: number) {
+    this.draftTeam();
+    if (this.team.length < 3) return;
+    S.team = this.team.map(c => [c.chain, c.level]);
+    S.upgrades = { atk: this.barracks, hp: this.barracks };
+    for (let i = 0; i < n; i++) {
+      S.cups = this.cups;
+      const en = makeEnemy();
+      const power = teamPower(en.team, false) * en.factor;
+      const win = simulateBattle(S.team, en.team, 1, en.factor);
+      if (win) { this.coins += 150 + Math.floor(power / 5); this.wins++; }
+      this.cups = Math.max(0, this.cups + cupsDelta(win, power));
+      this.battles++;
+      ARENA_MILESTONES.forEach((m, idx) => {
+        if (this.claimed[idx] || this.cups < m.cups) return;
+        this.claimed[idx] = true;
+        this.coins += m.coins ?? 0;
+        if (m.chest && this.board.length < this.capacity) {
+          const r = Math.random(); // уровни как в rollChest (src/shop.ts)
+          this.board.push({
+            chain: this.chains[Math.floor(Math.random() * this.chains.length)],
+            level: r < 0.2 ? 4 : r < 0.55 ? 3 : 2,
+          });
+        }
       });
     }
-    return true;
+    // Казарма — главный слив монет: качаем, пока есть тройной запас.
+    while (this.coins > upgradeCost(this.barracks) * 6) {
+      this.coins -= upgradeCost(this.barracks) * 2; // обе ветки
+      this.barracks++;
+    }
   }
 
   tapMinute() {
@@ -141,21 +193,46 @@ class Sim {
     this.coins += this.income * (60_000 / INCOME.periodMs);
     this.tapMinute();
     this.collectFree(60);
-    // Бюджет действий: сначала слияния (прогресс), потом заказы (монеты), потом покупки.
+    // Бюджет действий: сначала слияния (прогресс), потом покупки, потом продажа
+    // лишнего, если место кончилось.
     let budget = ACTIONS_PER_MIN;
-    let ordersLeft = ORDERS_PER_MIN;
     while (budget > 0) {
       if (this.mergeOne()) { budget--; continue; }
-      if (ordersLeft > 0 && this.deliverOne()) { budget--; ordersLeft--; continue; }
       if (this.buyOne()) { budget--; continue; }
-      break; // делать больше нечего — ждём генераторы/доход
+      if (this.sellOne()) { budget--; continue; }
+      break; // делать больше нечего — ждём бесплатное существо/доход
     }
     if (!this.rowUnlocked && this.coins > PRICES.rowCoins * 3) { this.coins -= PRICES.rowCoins; this.rowUnlocked = true; }
   }
 
+  /**
+   * Насыщение: сливать больше нечего (поле забито максимальным уровнем). В игре это
+   * означает «зона пройдена» — дальше открывают следующую, где доход выше, но поле
+   * пустое и всё начинается заново. Доход считается только с текущей локации.
+   */
+  get saturated() { return this.board.length >= this.capacity - 1 && !this.canMerge(); }
+  canMerge() {
+    for (let i = 0; i < this.board.length; i++)
+      for (let j = i + 1; j < this.board.length; j++) {
+        const a = this.board[i], b = this.board[j];
+        if (a.chain === b.chain && a.level === b.level && a.level < MAX_LEVEL) return true;
+      }
+    return false;
+  }
+  maybeNextZone(day: number): number | null {
+    if (this.zone >= ZONES.length - 1 || !this.saturated) return null;
+    const z = ZONES[this.zone + 1];
+    if (this.coins < z.unlockCoins) return null;
+    this.coins -= z.unlockCoins;
+    this.zone++;
+    this.board = [];        // новая локация — новое поле
+    this.spawnBought = 0;   // цена существ считается заново
+    return day;
+  }
+
   offline(hours: number) {
     const capped = Math.min(hours, INCOME.offlineCapHours);
-    this.coins += Math.floor(this.income * (capped * 3_600_000 / INCOME.periodMs));
+    this.coins += Math.floor(this.income * INCOME.offlineRate * (capped * 3_600_000 / INCOME.periodMs));
   }
 }
 
@@ -163,17 +240,22 @@ const pad = (s: string | number, n: number) => String(s).padStart(n);
 const fmt = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${Math.round(n)}`);
 
 console.log('=== ЭКОНОМИКА: 14 дней ===');
-console.log(`модель: ${SESSIONS_PER_DAY}×${MINUTES_PER_SESSION} мин/день, ${TAPS_PER_MIN} тапов/мин (комбо ${AVG_COMBO}), ${ORDERS_PER_MIN} заказа/мин\n`);
-console.log('день | монеты | доход/тик | тапы/мин | цена | сек до покупки | ур | слияний | заказов');
+console.log(`модель: ${SESSIONS_PER_DAY}×${MINUTES_PER_SESSION} мин/день, ${TAPS_PER_MIN} тапов/мин ` +
+  `(комбо ${AVG_COMBO}), ${BATTLES_PER_SESSION} боя за сессию\n`);
+console.log('день | монеты | доход/тик | цена | ур | слияний | продано | кубки | лига | казарма | зона');
 const sim = new Sim();
 // стартовые два существа как в FTUE
 sim.board.push({ chain: 0, level: 0 }, { chain: 0, level: 0 });
 const daily: { day: number; income: number; cost: number; tapShare: number }[] = [];
-let legendaryDay = 0; // день, когда впервые появилось существо 6-го уровня
+let legendaryDay = 0;
+const zoneDays: string[] = []; // день, когда впервые появилось существо 6-го уровня
 for (let day = 1; day <= DAYS; day++) {
   const beforeTaps = sim.taps;
   for (let s = 0; s < SESSIONS_PER_DAY; s++) {
     for (let m = 0; m < MINUTES_PER_SESSION; m++) sim.activeMinute();
+    sim.fightBattles(BATTLES_PER_SESSION);
+    const moved = sim.maybeNextZone(day);
+    if (moved !== null) zoneDays.push(`${ZONES[sim.zone].id}: день ${moved}`);
     sim.offline(s < SESSIONS_PER_DAY - 1 ? 4 : 12); // между сессиями и ночь
   }
   if (!legendaryDay && sim.bestLevel >= 6) legendaryDay = day;
@@ -185,9 +267,11 @@ for (let day = 1; day <= DAYS; day++) {
   const secToBuy = perMin > 0 ? (sim.spawnCost / (perMin / 60)).toFixed(1) : '∞';
   daily.push({ day, income: perMin, cost: sim.spawnCost, tapShare: tapPerMin / Math.max(1, perMin) });
   console.log([
-    pad(day, 4), pad(fmt(sim.coins), 7), pad(fmt(inc), 10), pad(fmt(tapPerMin), 9),
-    pad(fmt(sim.spawnCost), 5), pad(secToBuy, 15), pad(sim.bestLevel, 3), pad(sim.merges, 8), pad(sim.orders, 8),
+    pad(day, 4), pad(fmt(sim.coins), 7), pad(fmt(inc), 10), pad(fmt(sim.spawnCost), 5),
+    pad(sim.bestLevel, 3), pad(sim.merges, 8), pad(sim.sold, 8), pad(sim.cups, 6),
+    pad(leagueOf(sim.cups).key, 9), pad(sim.barracks, 8), pad(ZONES[sim.zone].id, 6),
   ].join(' |'));
+  void secToBuy;
   void beforeTaps;
 }
 
@@ -198,8 +282,8 @@ console.log('\nпроверки экономики:');
 const affordable = last.cost <= last.income * 10 || sim.coins > last.cost * 20;
 console.log(`  • цена существа vs доход: ${affordable ? 'OK' : 'ПЛОХО'} ` +
   `(цена ${fmt(last.cost)}; доход ${fmt(last.income)}/мин; на руках ${fmt(sim.coins)})`);
-console.log(`  • первая легендарка (6 ур.): ${legendaryDay ? `день ${legendaryDay}` : 'не достигнута за 14 дней'} ` +
-  `${legendaryDay >= 3 && legendaryDay <= 7 ? '— OK' : '— проверь: цель 3–7 день'}`);
+console.log(`  • первая легендарка (6 ур.): ${legendaryDay ? `день ${legendaryDay}` : 'не достигнута за 14 дней'}`);
+console.log(`  • переходы по локациям: ${zoneDays.length ? zoneDays.join(', ') : 'ни одной новой за 14 дней — проверь цены разблокировки'}`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +
   `${last.tapShare > 5 ? '— ПЛОХО: тапы обесценивают пассивный доход и офлайн' : '— OK'}`);
 

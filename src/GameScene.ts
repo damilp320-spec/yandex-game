@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, orderReward, ORDER_CHEST_EVERY, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -14,15 +14,13 @@ import { openShop, rollChest, ShopApi } from './shop';
 import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } from './i18n';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
-interface Order { chain: number; level: number; obj: Phaser.GameObjects.Container }
 
-// Полоса заказов: одна плашка на три слота, сразу над полем.
-const ORDER_BAR = { y: 196, w: 690, h: 72 };
+// Порог долгого нажатия: короче — кликер, дольше — карточка существа.
+const HOLD_MS = 350;
 
 export class GameScene extends Phaser.Scene {
   private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
   private grid: (Item | null)[][] = [];
-  private orders: Order[] = [];
   private spawnBar?: Phaser.GameObjects.Graphics;
   private coinsText!: Phaser.GameObjects.Text;
   private gemsText!: Phaser.GameObjects.Text;
@@ -38,8 +36,6 @@ export class GameScene extends Phaser.Scene {
   private hint?: Phaser.GameObjects.Text;
   private tipBanner?: Phaser.GameObjects.Container;
   private mergeHints?: Phaser.GameObjects.Graphics;
-  private orderBar!: Phaser.GameObjects.Container;
-  private chestChipText?: Phaser.GameObjects.Text;
   private ev: EventDef | null = null;
   private evCfg?: Chain;
   private api: ShopApi = {
@@ -63,7 +59,6 @@ export class GameScene extends Phaser.Scene {
 
   async create() {
     this.grid = Array.from({ length: GRID.rows }, () => Array(GRID.cols).fill(null));
-    this.orders = [];
     const hadSave = await restore();
     this.drawZoneBg();
     setMuted(!S.soundOn); // выбор игрока из сейва
@@ -84,7 +79,6 @@ export class GameScene extends Phaser.Scene {
 
     this.drawBoard();
     this.drawHud();
-    this.makeOrders();
 
     // Туториал также после сброса прогресса: иначе игрок остаётся с пустым полем.
     if ((!hadSave || !S.itemsZ[0]?.length) && S.zone === 0) this.startFtue();
@@ -269,6 +263,13 @@ export class GameScene extends Phaser.Scene {
     return empty.length ? Phaser.Math.RND.pick(empty) : null;
   }
 
+  /** Сколько свободных клеток на поле (для подсказок и «поле забито»). */
+  private freeCells(): number {
+    let n = 0;
+    for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) if (!this.grid[r][c]) n++;
+    return n;
+  }
+
   private spawnItem(chain: number, level: number, r: number, c: number, silent = false) {
     const { x, y } = this.cellXY(r, c);
     const box = this.add.container(x, y);
@@ -298,16 +299,27 @@ export class GameScene extends Phaser.Scene {
   private wireDrag(item: Item) {
     const box = item.obj;
     let dragged = false;
-    box.on('dragstart', () => { dragged = true; this.showMergeHints(item); });
-    box.on('pointerup', () => { if (!dragged) this.tapCreature(item); });
+    // Тап остаётся кликером (монеты с комбо), долгое нажатие открывает карточку
+    // существа: характеристики, продажа, отправка в команду. Разные жесты, потому
+    // что кликер — отдельная механика и отдавать его под меню нельзя.
+    let downAt = 0;
+    box.on('pointerdown', () => { downAt = Date.now(); });
+    box.on('dragstart', () => { dragged = true; downAt = 0; this.showMergeHints(item); });
+    // Длительность жеста считаем по реальным меткам времени, а не таймером сцены:
+    // таймер зависит от частоты кадров, а короткое касание и удержание надо
+    // различать одинаково надёжно на любом устройстве.
+    box.on('pointerup', () => {
+      if (dragged) return;
+      if (downAt && Date.now() - downAt >= HOLD_MS) this.creaturePanel(item);
+      else this.tapCreature(item);
+      downAt = 0;
+    });
     box.on('drag', (_p: unknown, dx: number, dy: number) => { box.setPosition(dx, dy).setDepth(10); });
     box.on('dragend', () => {
       dragged = false;
       box.setDepth(0);
       this.clearMergeHints();
       const from = this.findItem(item)!;
-      // Брошено на полосу заказов — пробуем сдать, минуя обычную логику клеток.
-      if (box.y < GRID.y && this.tryDeliverByDrop(item, box.x, box.y)) return;
       const to = this.cellAt(box.x, box.y);
       if (to) {
         const [r, c] = to, target = this.grid[r][c];
@@ -370,7 +382,7 @@ export class GameScene extends Phaser.Scene {
       S.event.points += level * 2;
       ui.toast(this, W / 2, GRID.y + 140, t('event.points', { emoji: this.ev.emoji, n: level * 2 }));
     }
-    if (this.hint) { this.hint.destroy(); this.hint = undefined; ui.toast(this, W / 2, 180, t('ftue.afterMerge')); }
+    if (this.hint) { this.hint.destroy(); this.hint = undefined; ui.toast(this, W / 2, GRID.y - 30, t('ftue.afterMerge')); }
     this.tipIncome();
     if (level >= 3) this.maybeStarterOffer();
     this.refreshHud();
@@ -567,9 +579,16 @@ export class GameScene extends Phaser.Scene {
       S.tips.arena = true; persist();
       this.tip('ftue.arena', this.arenaBtn);
     }
+    // Про карточку существа рассказываем, когда поле почти забито: именно тогда
+    // игроку впервые нужно что-то продать или отправить в бой.
+    if (!S.tips.card && this.freeCells() <= 3) {
+      const any = this.grid.flat().find(Boolean);
+      if (any) { S.tips.card = true; persist(); this.tip('ftue.card', any.obj); }
+    }
   }
 
-  private spawnCost(): number { return spawnCostOf(S.spawnBought); }
+  /** Цена существа зависит от дохода поля — см. spawnCostOf в config.ts. */
+  private spawnCost(): number { return spawnCostOf(S.spawnBought, this.totalIncome() * (60_000 / INCOME.periodMs)); }
 
   private refreshHud() {
     this.coinsText.setText(`${S.coins}`);
@@ -580,7 +599,6 @@ export class GameScene extends Phaser.Scene {
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
     this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
-    this.markOrders(); // состав поля изменился — обновляем подсветку заказов
     this.checkTips();
   }
 
@@ -625,112 +643,72 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- заказы ----------
-  private makeOrders() { this.drawOrderBar(); for (let i = 0; i < 3; i++) this.newOrder(i); }
-
   /**
-   * Полоса заказов: три слота в одной плашке вместо трёх отдельных карточек.
-   * Заказы — главный источник монет и единственная причина отдавать существ, поэтому
-   * убрать их нельзя. Но тапать по ним приходится часто, а висят они вверху экрана,
-   * поэтому сдать заказ можно ещё и перетаскиванием существа на полосу — жест,
-   * который начинается в удобной зоне и не требует тянуться пальцем.
+   * Карточка существа по долгому нажатию: доход, боевые характеристики, продажа и
+   * отправка в команду арены. Заменила систему заказов — теперь игрок сам решает,
+   * что держать ради дохода, что продать, а что поставить в бой, видя все цифры.
    */
-  private drawOrderBar() {
-    this.orderBar = this.add.container(W / 2, ORDER_BAR.y);
-    const g = this.add.graphics();
-    const w = ORDER_BAR.w, h = ORDER_BAR.h;
-    g.fillStyle(0x000000, 0.3); g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, 16);
-    g.fillGradientStyle(0x352a5e, 0x352a5e, 0x281f4a, 0x281f4a, 1);
-    g.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
-    g.lineStyle(2, 0x5a48a8, 0.9); g.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
-    this.orderBar.add(g);
-    // Счётчик до сундука на кромке полосы: стимул сдавать виден постоянно.
-    const chip = ui.chip(this, 0, -h / 2 - 2, 104, 26, '', '#ffd07a', 0x2a1f4d);
-    this.chestChipText = chip.list[1] as Phaser.GameObjects.Text;
-    this.orderBar.add(chip);
+  private creaturePanel(item: Item) {
+    const cfg = this.chainCfg(item.chain);
+    const name = item.level === 5 && S.customNames[item.chain]
+      ? `«${S.customNames[item.chain]}»` : this.cname(item.chain, item.level);
+    const p = ui.panel(this, name);
+    const st = unitStats(item.chain, item.level);
+    const price = sellPrice(item.chain, item.level);
+
+    this.addTo(p, this.add.image(W / 2, H / 2 - 300, textureKey(item.chain, item.level)).setDisplaySize(190, 190));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 185, `${rarityName(item.level)} · ${t('card.level', { n: item.level + 1 })}`,
+      { fontFamily: FONT, fontSize: '23px', color: RARITY[item.level], fontStyle: '700' }).setOrigin(0.5));
+
+    // Доход — главная причина держать существо на поле.
+    this.addTo(p, ui.card(this, W / 2, H / 2 - 110, 560, 76, 0x2e6d9d));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 110, t('card.income', { n: incomeOf(item.chain, item.level) }),
+      { fontFamily: FONT, fontSize: '26px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+
+    // Боевые характеристики — чтобы выбирать бойцов осознанно.
+    this.addTo(p, ui.card(this, W / 2, H / 2 - 10, 560, 82, 0x3a2f66));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 26, `⚔ ${st.dmg}    ❤ ${st.hp}    ⏱ ${(st.spd / 1000).toFixed(1)}${t('hud.sec')}`,
+      { fontFamily: FONT, fontSize: '25px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 6, t(`card.type.${st.type}`),
+      { fontFamily: FONT, fontSize: '19px', color: '#c9beee' }).setOrigin(0.5));
+
+    // В команду — если есть свободный слот; иначе объясняем, почему нельзя.
+    const inTeam = S.team.length >= 5;
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 110, 520, 74,
+      inTeam ? t('card.teamFull') : t('card.toTeam'), inTeam ? 0x3a3a55 : 0x9d5a2e, () => {
+        if (inTeam) { failSound(); return; }
+        S.team.push([item.chain, item.level]);
+        this.removeItem(item);
+        jingleFanfare(); track('team_add');
+        this.persistBoard(true); this.refreshHud();
+        p.destroy();
+      }, 24));
+
+    const sell = () => {
+      S.coins += price;
+      S.sold++;
+      this.removeItem(item);
+      coinSound(); track('creature_sold', { level: item.level });
+      ui.toast(this, W / 2, H / 2, `+${price}🪙`);
+      this.persistBoard(true); this.refreshHud();
+      p.destroy();
+    };
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 210, 520, 74, t('card.sell', { n: price }), 0x2e7d5b, () => {
+      // Легендарку продают только с подтверждением: собирается она долго.
+      if (item.level < 5) { sell(); return; }
+      const c = ui.panel(this, t('card.sellSure'));
+      this.addTo(c, this.add.text(W / 2, H / 2 - 60, t('card.sellLegend', { name, n: price }),
+        { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center', wordWrap: { width: 560 } }).setOrigin(0.5));
+      this.addTo(c, ui.button(this, W / 2, H / 2 + 60, 460, 74, t('card.sell', { n: price }), 0x9d2e4d, () => { c.destroy(); sell(); }, 24));
+    }, 24));
+    void cfg;
   }
 
-  /** Слот заказа внутри полосы: портрет, имя, награда и подсветка «можно сдать». */
-  private newOrder(slot: number) {
-    // Сложность растёт с прогрессом: заказы не выше уже открытых уровней локации (+1 на вырост).
-    const pool = ZONES[S.zone].chains;
-    let maxLv = 1;
-    pool.forEach(ch => S.discovered[ch].forEach((d, lv) => { if (d) maxLv = Math.max(maxLv, lv); }));
-    const level = Phaser.Math.Between(1, Math.min(4, maxLv + 1));
-    const chain = Phaser.Math.RND.pick(pool) as number;
-    this.orders[slot]?.obj.destroy();
-
-    const sw = ORDER_BAR.w / 3;
-    const c = this.add.container(W / 2 + (slot - 1) * sw, ORDER_BAR.y);
-    c.add(this.add.image(-sw / 2 + 32, 0, textureKey(chain, level)).setDisplaySize(50, 50));
-    c.add(this.add.text(14, -12, this.cname(chain, level), {
-      fontFamily: FONT, fontSize: '14px', color: '#fff', fontStyle: '600',
-      align: 'center', wordWrap: { width: 140 }, lineSpacing: -3,
-    }).setOrigin(0.5));
-    c.add(this.add.text(14, 16, `🪙 ${orderReward(chain, level)}`, {
-      fontFamily: FONT, fontSize: '15px', color: '#ffe066', fontStyle: '700',
-    }).setOrigin(0.5));
-    const hit = this.add.rectangle(0, 0, sw - 6, ORDER_BAR.h - 8, 0xffffff, 0.001).setInteractive();
-    hit.on('pointerdown', () => this.deliver(slot));
-    c.add(hit);
-    this.orders[slot] = { chain, level, obj: c };
-    this.markOrders();
-  }
-
-  /**
-   * Заказы, которые нечем сдать, приглушаются. Обратный вариант (обводить доступные)
-   * шумел: в начале игры подходят почти все три слота, и полоса пестрила рамками.
-   */
-  private markOrders() {
-    this.orders.forEach(o => {
-      if (!o) return;
-      const has = this.grid.some(row => row.some(it => it && it.chain === o.chain && it.level === o.level));
-      o.obj.setAlpha(has ? 1 : 0.42);
-    });
-    this.chestChipText?.setText(`📦 ${t('order.progress', { n: ORDER_CHEST_EVERY - (S.ordersDone % ORDER_CHEST_EVERY) })}`);
-  }
-
-  /** Сдача заказа перетаскиванием: существо брошено на полосу заказов. */
-  private tryDeliverByDrop(item: Item, x: number, y: number): boolean {
-    if (Math.abs(y - ORDER_BAR.y) > ORDER_BAR.h / 2 + 20) return false;
-    const slot = this.orders.findIndex(o => o.chain === item.chain && o.level === item.level);
-    if (slot < 0) {
-      // Бросили на полосу неподходящее существо — подсказываем, а не молчим.
-      failSound();
-      ui.toast(this, x, ORDER_BAR.y + 60, t('order.missing'), '#ff7070');
-      return false;
-    }
-    this.deliver(slot);
-    return true;
-  }
-
-  private deliver(slot: number) {
-    const o = this.orders[slot];
-    for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) {
-      const it = this.grid[r][c];
-      if (it && it.chain === o.chain && it.level === o.level) {
-        it.obj.destroy(); this.grid[r][c] = null;
-        const reward = orderReward(o.chain, o.level);
-        S.coins += reward;
-        S.ordersDone++; S.quests.progress.orders++; S.score += o.level * 3;
-        jingleOrder();
-        track('order_done');
-        ui.toast(this, o.obj.x, o.obj.y + 50, `+${reward}🪙`);
-        this.newOrder(slot);
-        // Каждый N-й заказ — сундук: причина сдавать даже когда монеты не нужны.
-        if (S.ordersDone % ORDER_CHEST_EVERY === 0) {
-          ui.toast(this, W / 2, ORDER_BAR.y + 90, t('order.chest'));
-          rollChest(this.api, this, W / 2, ORDER_BAR.y + 140);
-        }
-        // Естественный стык для interstitial (капы в sdk.ts, отключаемо покупкой).
-        if (S.ordersDone % INTERSTITIAL.everyNOrders === 0 && interstitialAllowed()) sdk.maybeInterstitial();
-        this.refreshHud(); this.persistBoard();
-        return;
-      }
-    }
-    failSound();
-    // Подсвечиваем карточку — сразу видно, какого существа не хватило.
-    this.tweens.add({ targets: o.obj, x: o.obj.x + 8, duration: 55, yoyo: true, repeat: 2 });
-    ui.toast(this, o.obj.x, o.obj.y - 60, t('order.missing'), '#ff7070');
+  /** Убрать существо с поля (продажа или отправка в команду). */
+  private removeItem(item: Item) {
+    const at = this.findItem(item);
+    if (at) this.grid[at[0]][at[1]] = null;
+    item.obj.destroy();
   }
 
   // ---------- ежедневный бонус ----------
@@ -910,31 +888,44 @@ export class GameScene extends Phaser.Scene {
         }, 19));
     });
     // милстоуны кубков
-    // Милстоуны: полоса прогресса до следующего порога + компактные строки наград.
-    const next = ARENA_MILESTONES.find((m, i) => !S.arenaClaimed[i] && S.cups < m.cups);
-    if (next) {
-      const prev = ARENA_MILESTONES.filter(m => m.cups < next.cups).pop()?.cups ?? 0;
-      const k = Math.max(0, Math.min(1, (S.cups - prev) / (next.cups - prev)));
-      const g = this.add.graphics();
-      g.fillStyle(0x161028, 0.9); g.fillRoundedRect(W / 2 - 280, H / 2 + 12, 560, 22, 11);
-      g.fillStyle(0xffb84d, 1); g.fillRoundedRect(W / 2 - 278, H / 2 + 14, Math.max(4, 556 * k), 18, 9);
-      this.addTo(p, g);
-      this.addTo(p, this.add.text(W / 2, H / 2 + 23, `${S.cups} / ${next.cups}🏆`,
-        { fontFamily: FONT, fontSize: '15px', color: '#241a45', fontStyle: '800' }).setOrigin(0.5));
+    // Лига: где игрок сейчас и сколько до следующей. Читается лучше числа кубков.
+    const league = leagueOf(S.cups), up = nextLeague(S.cups);
+    const lg = this.add.graphics();
+    lg.fillStyle(league.color, 0.22); lg.fillRoundedRect(W / 2 - 280, H / 2 + 6, 560, 62, 14);
+    lg.lineStyle(2, league.color, 0.9); lg.strokeRoundedRect(W / 2 - 280, H / 2 + 6, 560, 62, 14);
+    if (up) { // полоса прогресса до следующей лиги
+      const prev = league.cups;
+      const k = Math.max(0.02, Math.min(1, (S.cups - prev) / (up.cups - prev)));
+      lg.fillStyle(0x161028, 0.8); lg.fillRoundedRect(W / 2 - 268, H / 2 + 44, 536, 16, 8);
+      lg.fillStyle(league.color, 1); lg.fillRoundedRect(W / 2 - 266, H / 2 + 46, 532 * k, 12, 6);
     }
-    ARENA_MILESTONES.forEach((m, i) => {
-      const y = H / 2 + 62 + i * 46;
-      const rw = m.coins ? `${m.coins}🪙` : `${m.gems}💎`;
+    this.addTo(p, lg);
+    this.addTo(p, this.add.text(W / 2 - 266, H / 2 + 24, `🏆 ${t(`league.${league.key}`)}`,
+      { fontFamily: FONT, fontSize: '24px', color: '#fff', fontStyle: '800' }).setOrigin(0, 0.5));
+    this.addTo(p, this.add.text(W / 2 + 266, H / 2 + 24,
+      up ? `${S.cups} / ${up.cups}🏆` : `${S.cups}🏆`,
+      { fontFamily: FONT, fontSize: '21px', color: '#c9beee', fontStyle: '700' }).setOrigin(1, 0.5));
+
+    // Ближайшие три незабранные награды: полный список из десяти не влезает, а
+    // забранные строки только зашумляют — они исчезают.
+    const pending = ARENA_MILESTONES.map((m, i) => ({ m, i })).filter(({ i }) => !S.arenaClaimed[i]).slice(0, 3);
+    pending.forEach(({ m, i }, row) => {
+      const y = H / 2 + 106 + row * 48;
+      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && t('event.chest')].filter(Boolean).join(' + ');
       const reached = S.cups >= m.cups;
       this.addTo(p, this.add.text(W / 2 - 280, y, `${m.cups}🏆 — ${rw}`,
         { fontFamily: FONT, fontSize: '20px', color: reached ? '#fff' : '#6b6490', fontStyle: reached ? '600' : '400' }).setOrigin(0, 0.5));
-      if (S.arenaClaimed[i]) this.addTo(p, this.add.text(W / 2 + 240, y, '✅', { fontSize: '24px' }).setOrigin(0.5));
-      else if (reached)
+      if (reached)
         this.addTo(p, ui.button(this, W / 2 + 210, y, 150, 40, t('common.claim'), 0x2e7d5b, () => {
           S.arenaClaimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
-          tada(); this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
+          tada(); track('arena_milestone', { cups: m.cups });
+          if (m.chest) rollChest(this.api, this, W / 2, H / 2 + 200);
+          this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
         }, 16));
     });
+    if (!pending.length)
+      this.addTo(p, this.add.text(W / 2, H / 2 + 150, t('arena.allClaimed'),
+        { fontFamily: FONT, fontSize: '22px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
     // «Битва недели» жила отдельной кнопкой в шапке — перенесена сюда, к состязаниям.
     this.addTo(p, ui.button(this, W / 2 - 92, H / 2 + 336, 176, 48, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 17));
     this.addTo(p, ui.button(this, W / 2 + 96, H / 2 + 336, 176, 48, t('wb.short'), 0x9d2e4d, () => { p.destroy(); this.battlePanel(); }, 17));
@@ -987,13 +978,22 @@ export class GameScene extends Phaser.Scene {
   private battleResult(win: boolean, en: EnemyTeam) {
     const enemyPower = teamPower(en.team, false) * en.factor;
     const d = cupsDelta(win, enemyPower);
+    const leagueBefore = leagueOf(S.cups);
     S.cups = Math.max(0, S.cups + d);
+    S.battles++;
     let coins = 0;
-    if (win) { S.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
+    if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
     sdk.submitScore('cups', S.cups);
     track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
     persist(true); this.refreshHud();
     const p = ui.panel(this, t(win ? 'arena.win' : 'arena.lose'));
+    // Повышение в лиге — отдельный праздник, его не должно съесть окно результата.
+    const leagueNow = leagueOf(S.cups);
+    if (leagueNow.cups > leagueBefore.cups) {
+      jingleFanfare(); track('league_up', { league: leagueNow.key });
+      this.addTo(p, this.add.text(W / 2, H / 2 - 330, t('arena.leagueUp', { name: t(`league.${leagueNow.key}`) }),
+        { fontFamily: FONT, fontSize: '30px', color: '#ffe066', fontStyle: '800', align: 'center' }).setOrigin(0.5));
+    }
     const info = win
       ? t('arena.winInfo', { d: `${d >= 0 ? '+' : ''}${d}`, coins }) + (S.wins % 3 === 0 ? `\n\n${t('arena.chestHint')}` : '')
       : t('arena.loseInfo', { d });
@@ -1004,7 +1004,9 @@ export class GameScene extends Phaser.Scene {
     if (!win)
       this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 460, 66, t('arena.rematch', { buff: REMATCH_BUFF }), 0x2e7d5b, () =>
         sdk.showRewarded(() => { p.destroy(); this.startArenaBattle(REMATCH_BUFF, en); }), 21));
-    if (S.ordersDone > 0 && interstitialAllowed()) sdk.maybeInterstitial(); // естественный стык
+    // Конец боя — естественный стык для interstitial (заказов, служивших якорем
+    // раньше, больше нет). Капы и запрет в первую сессию — в sdk.ts.
+    if (S.battles % INTERSTITIAL.everyNBattles === 0 && interstitialAllowed()) sdk.maybeInterstitial();
   }
 
   private async leaderboardPanel() {
@@ -1131,7 +1133,7 @@ export class GameScene extends Phaser.Scene {
   private offlinePopup() {
     // Офлайн-доход = доход поля на момент выхода × время (кап 8 часов).
     const seconds = Math.min((Date.now() - S.lastSeen) / 1000, INCOME.offlineCapHours * 3600);
-    const earned = Math.floor(S.incomeRate * (seconds * 1000 / INCOME.periodMs));
+    const earned = Math.floor(S.incomeRate * INCOME.offlineRate * (seconds * 1000 / INCOME.periodMs));
     if (earned < OFFLINE_MIN_COINS) return;
     const p = ui.panel(this, t('offline.title'));
     this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('offline.desc', { n: earned }), { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));

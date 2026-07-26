@@ -4,10 +4,10 @@ import * as sdk from './sdk';
 import { Lang, setLang } from './i18n';
 
 // Текст задания — в i18n по ключу `quest.<id>`.
-export interface QuestDef { id: 'merges' | 'orders' | 'spawns' | 'taps'; target: number; coins: number; gems: number }
+export interface QuestDef { id: 'merges' | 'wins' | 'spawns' | 'taps'; target: number; coins: number; gems: number }
 export const QUESTS: QuestDef[] = [
   { id: 'merges', target: 20, coins: 400, gems: 2 },
-  { id: 'orders', target: 5, coins: 600, gems: 3 },
+  { id: 'wins', target: 3, coins: 600, gems: 3 },     // было «выполни заказы» — заказов больше нет
   { id: 'spawns', target: 12, coins: 300, gems: 1 },
   { id: 'taps', target: 60, coins: 500, gems: 2 },
 ];
@@ -32,7 +32,7 @@ export const S = {
   adFreeUntil: 0,
   streakDay: 0,
   streakLast: '',
-  quests: { date: '', progress: { merges: 0, orders: 0, spawns: 0, taps: 0 } as Record<string, number>, claimed: [] as boolean[] },
+  quests: { date: '', progress: { merges: 0, wins: 0, spawns: 0, taps: 0 } as Record<string, number>, claimed: [] as boolean[] },
   discovered: [] as boolean[][],
   freeLast: 0,              // когда последний раз брали бесплатное существо
   freeChestLast: 0,
@@ -53,12 +53,13 @@ export const S = {
   arenaClaimed: [] as boolean[],
   ftueDone: false,
   score: 0,
-  ordersDone: 0,
+  battles: 0,               // боёв всего — якорь для interstitial
+  sold: 0,                  // продано существ (для аналитики и квестов)
   // настройки игрока
   lang: '' as Lang | '',   // пусто = язык платформы/браузера
   soundOn: true,
   // подсказки FTUE 2.0: каждая показывается один раз
-  tips: { income: false, tap: false, arena: false },
+  tips: { income: false, tap: false, arena: false, card: false },
 };
 
 export const today = () => new Date().toISOString().slice(0, 10);
@@ -84,7 +85,7 @@ function ensureShapes() {
   QUESTS.forEach(q => { S.quests.progress[q.id] ??= 0; });
   // старые сейвы: подсказки/настройки могли не существовать
   const tips = (S.tips ?? {}) as Partial<typeof S.tips>;
-  S.tips = { income: !!tips.income, tap: !!tips.tap, arena: !!tips.arena };
+  S.tips = { income: !!tips.income, tap: !!tips.tap, arena: !!tips.arena, card: !!tips.card };
   S.soundOn ??= true;
   // Миграция старых сейвов: плоский items становится полем первой локации.
   const legacy = (S as any).items as number[][] | undefined;
@@ -93,7 +94,7 @@ function ensureShapes() {
 
 export function resetDailies() {
   if (S.quests.date !== today())
-    S.quests = { date: today(), progress: { merges: 0, orders: 0, spawns: 0, taps: 0 }, claimed: QUESTS.map(() => false) };
+    S.quests = { date: today(), progress: { merges: 0, wins: 0, spawns: 0, taps: 0 }, claimed: QUESTS.map(() => false) };
 }
 
 /** 'claim' — можно забрать бонус дня; 'lost' — серия прервана (предложить спасти за рекламу). */
@@ -118,12 +119,12 @@ export function resetProgress() {
   localStorage.removeItem('save');
   Object.assign(S, {
     coins: 0, gems: 0, itemsZ: [[]], zone: 0, zoneUnlocked: [true], rowUnlocked: false,
-    streakDay: 0, streakLast: '', quests: { date: '', progress: { merges: 0, orders: 0, spawns: 0, taps: 0 }, claimed: [] },
+    streakDay: 0, streakLast: '', quests: { date: '', progress: { merges: 0, wins: 0, spawns: 0, taps: 0 }, claimed: [] },
     discovered: [], freeLast: 0, freeChestLast: 0, event: { id: '', points: 0, claimed: [] },
     spawnBought: 0, incomeRate: 0, boostUntil: 0, boostMult: 1, customNames: {},
     battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, wins: 0,
-    upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, ordersDone: 0,
-    starterOffered: false, tips: { income: false, tap: false, arena: false }, ...keep,
+    upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
+    starterOffered: false, tips: { income: false, tap: false, arena: false, card: false }, ...keep,
   });
   ensureShapes();
   persist(true);

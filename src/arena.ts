@@ -147,9 +147,23 @@ export const teamPower = (team: number[][], upgraded = true) =>
 // Прокачка казармы: бесконечный монетный синк (+5% за уровень).
 export const upgradeCost = (lvl: number) => Math.floor(500 * Math.pow(1.5, lvl));
 
-export const ARENA_MILESTONES: { cups: number; coins?: number; gems?: number }[] = [
-  { cups: 100, gems: 10 }, { cups: 300, coins: 5000 }, { cups: 600, gems: 25 },
-  { cups: 1000, coins: 20000 }, { cups: 1500, gems: 60 }, { cups: 2500, gems: 150 },
+/**
+ * Пороги кубков. Сундуки переехали сюда с заказов: арена стала главным источником
+ * коллекции, а поле — экономическим движком. Монеты в наградах почти не нужны — их
+ * и так вдоволь от пассивного дохода, поэтому платим кристаллами и существами.
+ * Дотянуто до 5000🏆 (было 2500): прежней лестницы хватало примерно на две недели.
+ */
+export const ARENA_MILESTONES: { cups: number; coins?: number; gems?: number; chest?: boolean }[] = [
+  { cups: 100, gems: 10 },
+  { cups: 300, chest: true },
+  { cups: 600, gems: 25 },
+  { cups: 1000, chest: true },
+  { cups: 1500, gems: 60 },
+  { cups: 2000, chest: true },
+  { cups: 2500, gems: 100 },
+  { cups: 3000, chest: true },
+  { cups: 4000, gems: 150, chest: true },
+  { cups: 5000, gems: 300, chest: true },
 ];
 
 export interface EnemyTeam { name: string; cups: number; team: number[][]; factor: number }
@@ -184,7 +198,10 @@ export function makeEnemy(): EnemyTeam {
     team.push([ch, best]);
   }
   // добиваем разницу скрытым множителем, чтобы бой был честным «почти вровень»
-  const factor = Math.min(1.8, Math.max(0.75, target / Math.max(1, teamPower(team, false))));
+  // Потолок множителя поднят до 3: при 1.8 соперник упирался в предел, прокачанный
+  // игрок начинал выигрывать всё подряд, а победа над слабым даёт лишь минимум
+  // кубков — лестница превращалась в грайнд по 8 кубков за бой.
+  const factor = Math.min(3, Math.max(0.75, target / Math.max(1, teamPower(team, false))));
   const pool = nicks();
   return {
     name: pool[Math.floor(Math.random() * pool.length)],
