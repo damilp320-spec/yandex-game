@@ -1,6 +1,6 @@
 // Магазин: витрина Яндекс.Платежей + синки кристаллов. Дизайн и психология — PLAN.md §16.
 import Phaser from 'phaser';
-import { W, H, PRICES, ENERGY } from './config';
+import { W, H, PRICES, ENERGY, SECRET_CHANCE } from './config';
 import { S, persist } from './state';
 import * as sdk from './sdk';
 import { button, panel, toast } from './ui';
@@ -8,8 +8,10 @@ import { track } from './analytics';
 import { tada, coinSound, failSound } from './audio';
 
 export interface ShopApi {
-  /** Выдать существо на поле (случайная цепочка). Вернёт false, если поле забито. */
+  /** Выдать существо на поле (случайная цепочка локации). Вернёт false, если поле забито. */
   spawnReward(level: number): boolean;
+  /** Выдать секретного «67». Вернёт false, если поле забито. */
+  spawnSecret(): boolean;
   refreshHud(): void;
 }
 
@@ -30,11 +32,17 @@ const PRODUCTS: Product[] = [
   },
 ];
 
-/** Сундук: вариативное вознаграждение — уровни 2–4, секретный 5-й с шансом 3%. */
+/** Сундук: вариативное вознаграждение — уровни 2–4; секретный «67» с шансом 6,7%. */
 export function rollChest(api: ShopApi, s: Phaser.Scene, x: number, y: number) {
   const r = Math.random();
-  const level = r < 0.03 ? 5 : r < 0.15 ? 4 : r < 0.5 ? 3 : 2;
-  if (api.spawnReward(level)) { tada(); toast(s, x, y, level >= 5 ? 'СЕКРЕТНОЕ СУЩЕСТВО!!!' : 'Новое существо из сундука!'); }
+  if (r < SECRET_CHANCE) {
+    if (api.spawnSecret()) { tada(); toast(s, x, y, '⁉️ ВЫПАЛ СЕКРЕТНЫЙ 67!!!'); }
+    else { S.gems += 67; coinSound(); toast(s, x, y, 'Поле забито — +67💎 (это знак)'); }
+    api.refreshHud(); persist();
+    return;
+  }
+  const level = r < 0.2 ? 4 : r < 0.55 ? 3 : 2;
+  if (api.spawnReward(level)) { tada(); toast(s, x, y, 'Новое существо из сундука!'); }
   else { S.coins += 200 * level; coinSound(); toast(s, x, y, `Поле забито — +${200 * level}🪙`); }
   api.refreshHud(); persist();
 }

@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
-import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES } from './config';
+import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { track } from './analytics';
 import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
-import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, failSound, tada } from './audio';
+import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, failSound, tada, registerSoundScene } from './audio';
 import { openShop, ShopApi } from './shop';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
@@ -25,7 +25,11 @@ export class GameScene extends Phaser.Scene {
   private hint?: Phaser.GameObjects.Text;
   private ev: EventDef | null = null;
   private evCfg?: Chain;
-  private api: ShopApi = { spawnReward: (lv) => this.spawnReward(lv), refreshHud: () => this.refreshHud() };
+  private api: ShopApi = {
+    spawnReward: (lv) => this.spawnReward(lv),
+    spawnSecret: () => this.spawnSecret(),
+    refreshHud: () => this.refreshHud(),
+  };
 
   /** Конфиг цепочки с учётом событийной (индекс за пределами CHAINS). */
   private chainCfg(i: number): Chain { return i === EVENT_CHAIN_INDEX && this.evCfg ? this.evCfg : CHAINS[i]; }
@@ -37,7 +41,9 @@ export class GameScene extends Phaser.Scene {
     this.orders = [];
     this.genEntries = [];
     const hadSave = await restore();
-    this.cameras.main.setBackgroundColor(ZONES[S.zone].bg);
+    this.drawZoneBg();
+    registerSoundScene(this);
+    this.loadCustomSounds();
     for (const id of await sdk.restorePurchases()) {
       if (id === 'no_ads') S.noAds = true;
       if (id === 'starter') S.starterBought = true;
@@ -78,13 +84,57 @@ export class GameScene extends Phaser.Scene {
 
   private maxRows() { return S.rowUnlocked ? GRID.rows : GRID.rows - 1; }
 
+  /** Кастомные джинглы игрока: public/sounds/manifest.json со списком имён (см. audio.ts). */
+  private loadCustomSounds() {
+    fetch('sounds/manifest.json')
+      .then(r => (r.ok ? r.json() : null))
+      .then((list: string[] | null) => {
+        if (!Array.isArray(list) || !list.length) return;
+        list.forEach(n => this.load.audio(`snd_${n}`, `sounds/${n}.mp3`));
+        this.load.start();
+      })
+      .catch(() => {});
+  }
+
+  /** Тематический фон локации — рисуется процедурно. */
+  private drawZoneBg() {
+    this.cameras.main.setBackgroundColor(ZONES[S.zone].bg);
+    const g = this.add.graphics().setDepth(-10);
+    const id = ZONES[S.zone].id;
+    if (id === 'lab') { // лаборатория: пузырьки в колбах и мягкое свечение
+      g.fillGradientStyle(0x241645, 0x241645, 0x120c22, 0x120c22, 1); g.fillRect(0, 0, W, H);
+      g.fillStyle(0x8f7bd8, 0.06);
+      for (let i = 0; i < 14; i++) g.fillCircle((i * 173) % W, (i * 291) % H, 24 + (i * 37) % 60);
+      g.fillStyle(0x5ad0c0, 0.05); g.fillEllipse(W / 2, H - 60, W * 1.4, 300);
+    } else if (id === 'club') { // клуб: неоновые лучи и дискотечные блики
+      g.fillGradientStyle(0x101c3a, 0x101c3a, 0x080d1c, 0x080d1c, 1); g.fillRect(0, 0, W, H);
+      const beams: [number, number][] = [[0xe0409a, 120], [0x3ba7dc, 360], [0x58c0a8, 600]];
+      beams.forEach(([col, bx]) => { g.fillStyle(col, 0.07); g.fillTriangle(bx, 0, bx - 170, H, bx + 170, H); });
+      g.fillStyle(0xffffff, 0.08);
+      for (let i = 0; i < 22; i++) g.fillCircle((i * 137 + 40) % W, (i * 211) % H, 3);
+    } else { // ночной дозор: луна, туман и свет фонаря
+      g.fillGradientStyle(0x2c1c16, 0x2c1c16, 0x140c0a, 0x140c0a, 1); g.fillRect(0, 0, W, H);
+      g.fillStyle(0xf2e2b0, 0.1); g.fillCircle(W - 110, 150, 95);
+      g.fillStyle(0xf2e2b0, 0.75); g.fillCircle(W - 110, 150, 52);
+      g.fillStyle(0xd8b46a, 0.06); g.fillTriangle(90, 60, 0, H * 0.75, 320, H * 0.75); // конус фонаря
+      g.fillStyle(0xcabfae, 0.05); g.fillEllipse(W / 2, H - 140, W * 1.5, 220); // туман
+      g.fillStyle(0xcabfae, 0.04); g.fillEllipse(W / 3, H - 300, W, 160);
+    }
+  }
+
   // ---------- поле ----------
   private drawBoard() {
     const { cols, rows, cell, x, y } = GRID;
-    this.add.rectangle(W / 2, y + (rows * cell) / 2, cols * cell + 12, rows * cell + 12, 0x2a1f4d).setStrokeStyle(3, 0x4a3a80);
+    const g = this.add.graphics().setDepth(-5);
+    g.fillStyle(0x000000, 0.35); g.fillRoundedRect(x - 8 + 3, y - 8 + 6, cols * cell + 16, rows * cell + 16, 22); // тень
+    g.fillGradientStyle(0x322558, 0x322558, 0x241b42, 0x241b42, 1);
+    g.fillRoundedRect(x - 8, y - 8, cols * cell + 16, rows * cell + 16, 22);
+    g.lineStyle(3, 0x5a48a8, 0.9); g.strokeRoundedRect(x - 8, y - 8, cols * cell + 16, rows * cell + 16, 22);
     for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++)
-        this.add.rectangle(x + c * cell + cell / 2, y + r * cell + cell / 2, cell - 6, cell - 6, 0x342a5c);
+      for (let c = 0; c < cols; c++) {
+        g.fillStyle((r + c) % 2 ? 0x3a2f66 : 0x352a5e, 1); // мягкая «шахматка»
+        g.fillRoundedRect(x + c * cell + 3, y + r * cell + 3, cell - 6, cell - 6, 12);
+      }
     if (!S.rowUnlocked) this.drawLockedRow();
   }
 
@@ -151,6 +201,7 @@ export class GameScene extends Phaser.Scene {
     jingleDiscovery();
     ui.toast(this, W / 2, GRID.y + 80, `📖 Открыто: ${CHAINS[chain].names[level]}! +${coins}🪙${gems ? ` +${gems}💎` : ''}`);
     this.refreshHud();
+    if (chain === SECRET_CHAIN && level === 0) this.secret67Panel();
   }
 
   private wireDrag(item: Item) {
@@ -230,13 +281,14 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- HUD ----------
   private drawHud() {
-    this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontSize: '38px', color: '#ffe066', fontStyle: 'bold' }).setOrigin(0.5);
+    this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontFamily: FONT, fontSize: '40px', color: '#ffe066', fontStyle: '900' })
+      .setOrigin(0.5).setStroke('#120c22', 8).setShadow(0, 3, 'rgba(0,0,0,0.5)', 4);
     if (this.ev)
       ui.button(this, 250, 134, 380, 44, `${this.ev.emoji} ${this.ev.title} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 20);
     ui.button(this, 590, 134, 220, 44, `🗺️ ${ZONES[S.zone].title}`, 0x2e6d9d, () => this.zonesPanel(), 19);
-    this.coinsText = this.add.text(40, 86, '', { fontSize: '30px', color: '#fff' });
-    this.gemsText = this.add.text(260, 86, '', { fontSize: '30px', color: '#c9a6ff' });
-    this.energyText = this.add.text(460, 86, '', { fontSize: '30px', color: '#7fdcff' });
+    this.coinsText = ui.pill(this, 24, 88, 210, '🪙', 0xffe066);
+    this.gemsText = ui.pill(this, 254, 88, 190, '💎', 0xc9a6ff);
+    this.energyText = ui.pill(this, 464, 88, 232, '⚡', 0x7fdcff);
 
     ui.button(this, 140, 1132, 200, 56, '💎 Магазин', 0x8f5ad0, () => openShop(this, this.api), 22);
     ui.button(this, 360, 1132, 200, 56, '📋 Задания', 0x2e6d9d, () => this.questsPanel(), 22);
@@ -251,9 +303,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshHud() {
-    this.coinsText.setText(`🪙 ${S.coins}`);
-    this.gemsText.setText(`💎 ${S.gems}`);
-    this.energyText.setText(`⚡ ${Math.floor(S.energy)}/${ENERGY.max}`);
+    this.coinsText.setText(`${S.coins}`);
+    this.gemsText.setText(`${S.gems}`);
+    this.energyText.setText(`${Math.floor(S.energy)}/${ENERGY.max}`);
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
   }
@@ -268,6 +320,14 @@ export class GameScene extends Phaser.Scene {
     this.spawnItem(chain, 0, ...cell);
     S.quests.progress.spawns++;
     this.refreshHud();
+  }
+
+  private spawnSecret(): boolean {
+    const cell = this.findEmpty();
+    if (!cell) return false;
+    this.spawnItem(SECRET_CHAIN, 0, ...cell);
+    this.persistBoard();
+    return true;
   }
 
   private spawnReward(level: number): boolean {
@@ -430,16 +490,40 @@ export class GameScene extends Phaser.Scene {
     const total = CHAINS.reduce((n, ch) => n + ch.names.length, 0);
     const found = S.discovered.flat().filter(Boolean).length;
     const p = ui.panel(this, `📖 Мемпедия ${found}/${total}`);
-    const step = 600 / CHAINS.length;
+    // Сетка портретов: ряд — цепочка, колонка — уровень. Тап по портрету — имя.
+    const x0 = W / 2 - 180, y0 = H / 2 - 348;
     CHAINS.forEach((cfg, ci) => {
-      const x = W / 2 - 300 + step / 2 + ci * step;
-      this.addTo(p, this.add.image(x, H / 2 - 330, textureKey(ci, 0)).setDisplaySize(52, 52));
+      const y = y0 + ci * 78;
+      this.addTo(p, this.add.image(x0 - 100, y, textureKey(ci, 0)).setDisplaySize(46, 46).setAlpha(0.85));
       cfg.names.forEach((name, lv) => {
-        const known = S.discovered[ci][lv];
-        this.addTo(p, this.add.text(x, H / 2 - 270 + lv * 95, known ? name : '???',
-          { fontSize: '15px', color: known ? RARITY[lv].color : '#5a5474', align: 'center', wordWrap: { width: step - 8 } }).setOrigin(0.5));
+        const x = x0 + lv * 72;
+        if (S.discovered[ci][lv]) {
+          const img = this.add.image(x, y, textureKey(ci, lv)).setDisplaySize(62, 62).setInteractive();
+          img.on('pointerdown', () => ui.toast(this, W / 2, y, `${name} · ${RARITY[lv].name}`, RARITY[lv].color));
+          this.addTo(p, img);
+        } else {
+          const box = this.add.rectangle(x, y, 60, 60, 0x161028, 0.9).setStrokeStyle(2, 0x4a3a80).setInteractive();
+          box.on('pointerdown', () => ui.toast(this, W / 2, y, ci === SECRET_CHAIN ? 'Секрет… ищи в сундуках 👀' : 'Ещё не открыт', '#8f86b8'));
+          this.addTo(p, box);
+          this.addTo(p, this.add.text(x, y, '?', { fontFamily: FONT, fontSize: '26px', color: '#5a5474', fontStyle: '700' }).setOrigin(0.5));
+        }
       });
     });
+  }
+
+  // ---------- секретный «67»: главный вирусный крючок ----------
+  private secret67Panel() {
+    track('secret_67_found');
+    const p = ui.panel(this, '⁉️ 6 7 !!!');
+    this.addTo(p, this.add.image(W / 2, H / 2 - 220, textureKey(SECRET_CHAIN, 0)).setDisplaySize(180, 180));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 60,
+      'Ты выбил СЕКРЕТНОГО 67!\nШанс — всего 6,7%.\n\nТаких игроков — единицы.\nСольёшь до ЛЕГЕНДО 67 — станешь легендой сам.',
+      { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 140, 480, 72, '📣 Скопировать хвастовство', 0x2e7d5b, () => {
+      navigator.clipboard?.writeText('Я выбил секретного 67 в Brainrot Lab: Merge — шанс всего 6,7% 🔵6️⃣7️⃣ Слабо повторить? Ищи игру на Яндекс Играх!').catch(() => {});
+      track('secret_67_share');
+      ui.toast(this, W / 2, H / 2 + 90, 'Скопировано — кидай в чат!');
+    }));
   }
 
   // ---------- стартер-пак: единственный проактивный офер, один раз, после «вау» ----------

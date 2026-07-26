@@ -99,6 +99,53 @@ function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number) 
       g.lineStyle(4, shade(c, 0.6)); g.strokeRoundedRect(cx - size * 0.8, cy - size * 0.8, size * 1.6, size * 1.55, 12);
       break;
     }
+    case 'fruit': { // клубничка-леди (с 4-го уровня — дуэт с бананом)
+      g.fillTriangle(cx - 22, cy - size * 0.8, cx, cy - size * 1.2, cx + 4, cy - size * 0.7); // листья
+      g.fillStyle(0x4da84d); g.fillTriangle(cx - 4, cy - size * 0.7, cx + 2, cy - size * 1.15, cx + 24, cy - size * 0.78);
+      g.fillStyle(c); g.fillEllipse(cx, cy, size * 1.7, size * 1.8); // ягода
+      g.fillStyle(0xffe066, 0.85); // семечки
+      for (let i = 0; i < 8; i++) g.fillEllipse(cx - size * 0.55 + (i % 4) * size * 0.37, cy + size * 0.25 + Math.floor(i / 4) * size * 0.4, 5, 8);
+      if (lv >= 3) { // рядом вырастает банан-кавалер
+        g.fillStyle(0xf2d24c); g.fillEllipse(cx + size * 0.95, cy - size * 0.2, size * 0.55, size * 1.5);
+        g.fillStyle(0x8a6d2f); g.fillRect(cx + size * 0.85, cy - size * 0.95, 8, 12);
+      }
+      g.fillStyle(shade(c, 1.35), 0.4); g.fillEllipse(cx - size * 0.4, cy - size * 0.35, size * 0.6, size * 0.5);
+      g.lineStyle(4, shade(c, 0.6)); g.strokeEllipse(cx, cy, size * 1.7, size * 1.8);
+      break;
+    }
+    case 'stick': { // ночной сторож-полено с битой
+      g.fillStyle(shade(c, 0.8)); g.fillRoundedRect(cx - size * 0.55 + 4, cy - size * 1.05 + 4, size * 1.1, size * 2.1, 14); // тыльная грань
+      g.fillStyle(c); g.fillRoundedRect(cx - size * 0.55, cy - size * 1.05, size * 1.1, size * 2.1, 14); // ствол
+      g.lineStyle(3, shade(c, 0.65)); // древесные волокна
+      g.lineBetween(cx - size * 0.3, cy - size * 0.6, cx - size * 0.3, cy + size * 0.7);
+      g.lineBetween(cx + size * 0.28, cy - size * 0.3, cx + size * 0.28, cy + size * 0.9);
+      g.fillStyle(shade(c, 1.3)); g.fillEllipse(cx, cy - size * 1.05, size * 1.1, size * 0.35); // спил
+      if (lv >= 2) { // бита в «руке»
+        g.fillStyle(shade(c, 0.7));
+        g.fillRoundedRect(cx + size * 0.62, cy - size * 0.1, 12, size * 1.1, 6);
+        g.fillEllipse(cx + size * 0.68, cy + size * 1.05, 20, 26);
+      }
+      break;
+    }
+    case 'sixseven': { // блочный «67» из Роблокса: цифры-тело
+      const bw = size * 0.16; // толщина сегмента
+      const digit = (dx0: number, segs: number[][]) => segs.forEach(([sx, sy, sw, sh]) =>
+        g.fillRoundedRect(cx + dx0 + sx * size, cy + sy * size, sw * size, sh * size, 4));
+      g.fillStyle(shade(c, 0.75)); // тень-грань
+      // «6»
+      digit(-size * 1.05 + 3, [[0, -0.9, 0.75, 0.18], [0, -0.9, 0.18, 1.6], [0, 0.52, 0.75, 0.18], [0.57, -0.15, 0.18, 0.85], [0, -0.15, 0.75, 0.16]]);
+      g.fillStyle(c);
+      digit(-size * 1.05, [[0, -0.9, 0.75, 0.18], [0, -0.9, 0.18, 1.6], [0, 0.52, 0.75, 0.18], [0.57, -0.15, 0.18, 0.85], [0, -0.15, 0.75, 0.16]]);
+      // «7»
+      g.fillStyle(shade(c, 0.75));
+      digit(size * 0.25 + 3, [[0, -0.9, 0.8, 0.18], [0.5, -0.9, 0.22, 1.6]]);
+      g.fillStyle(c);
+      digit(size * 0.25, [[0, -0.9, 0.8, 0.18], [0.5, -0.9, 0.22, 1.6]]);
+      // ноги-кубики с кедами
+      g.fillStyle(shade(c, 0.9)); g.fillRect(cx - size * 0.75, cy + size * 0.7, bw * 2, size * 0.32); g.fillRect(cx + size * 0.55, cy + size * 0.7, bw * 2, size * 0.32);
+      g.fillStyle(0xd8dde4); g.fillRoundedRect(cx - size * 0.85, cy + size * 0.98, size * 0.45, size * 0.2, 5); g.fillRoundedRect(cx + size * 0.45, cy + size * 0.98, size * 0.45, size * 0.2, 5);
+      break;
+    }
     default: { // событийная цепочка: солнце/снежинка-звезда
       g.fillCircle(cx, cy, size);
       g.lineStyle(5, shade(c, 1.3));
@@ -113,7 +160,9 @@ function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number) 
 
   // лицо: глаза с бликами, зрачки, щёчки, улыбка
   const isRobot = cfg.id === 'robot';
-  const ey = cfg.id === 'shark' ? cy - 8 : cy - 12, dx = 11 + lv;
+  // у «67» глаза сидят в самих цифрах, как в оригинальном меме
+  const ey = cfg.id === 'sixseven' ? cy - size * 0.35 : cfg.id === 'shark' ? cy - 8 : cy - 12;
+  const dx = cfg.id === 'sixseven' ? size * 0.65 : 11 + lv;
   g.fillStyle(isRobot ? 0x7fdcff : 0xffffff);
   g.fillCircle(cx - dx, ey, 8 + lv); g.fillCircle(cx + dx, ey, 8 + lv);
   if (!isRobot) {
