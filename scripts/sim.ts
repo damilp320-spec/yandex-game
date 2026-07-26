@@ -7,7 +7,7 @@
 // Модель поведения игрока (осознанные допущения, меняй здесь):
 //   3 сессии в день × 7 минут = 21 активная минута, остальное — офлайн (кап 8 ч);
 //   в активную минуту: 12 тиков дохода, TAPS_PER_MIN тапов со средним комбо,
-//   бесплатные существа из генераторов (кулдаун GEN.cooldownMs на цепочку),
+//   бесплатное существо по кулдауну GEN.cooldownMs (одна кнопка, «умный» рандом),
 //   покупка существ пока хватает монет с запасом, жадные слияния,
 //   до 2 заказов в минуту (если на поле есть подходящее существо).
 import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, ORDER_REWARD_BY_LEVEL, incomeOf } from '../src/config';
@@ -55,18 +55,23 @@ class Sim {
   }
 
   /**
-   * Генераторы: бесплатное существо каждой цепочки раз в GEN.cooldownMs — «двигатель» поля.
-   * Копим дробный прогресс: кулдаун (90 с) больше шага симуляции (60 с).
+   * Бесплатное существо по кулдауну — «двигатель» поля. Раньше это были четыре
+   * генератора по цепочкам, теперь одна кнопка со случайной цепочкой и поддавками:
+   * если на поле есть «одиночка» первого уровня, в 70% случаев выдаётся его пара.
    */
-  private genProgress: number[] = CHAINS_OF_ZONE.map(() => 0);
-  collectGenerators(seconds: number) {
-    CHAINS_OF_ZONE.forEach((ch, i) => {
-      this.genProgress[i] += seconds / (GEN.cooldownMs / 1000);
-      while (this.genProgress[i] >= 1) {
-        this.genProgress[i] -= 1;
-        if (this.board.length < this.capacity) this.board.push({ chain: ch, level: 0 });
-      }
-    });
+  private freeProgress = 0;
+  collectFree(seconds: number) {
+    this.freeProgress += seconds / (GEN.cooldownMs / 1000);
+    while (this.freeProgress >= 1) {
+      this.freeProgress -= 1;
+      if (this.board.length >= this.capacity) break;
+      const lonely = CHAINS_OF_ZONE.filter(ch =>
+        this.board.filter(c => c.chain === ch && c.level === 0).length % 2 === 1);
+      const ch = lonely.length && Math.random() < 0.7
+        ? lonely[Math.floor(Math.random() * lonely.length)]
+        : CHAINS_OF_ZONE[Math.floor(Math.random() * CHAINS_OF_ZONE.length)];
+      this.board.push({ chain: ch, level: 0 });
+    }
   }
 
   /** Одно слияние (самая высокая доступная пара — так играет разумный игрок). */
@@ -112,7 +117,7 @@ class Sim {
   activeMinute() {
     this.coins += this.income * (60_000 / INCOME.periodMs);
     this.tapMinute();
-    this.collectGenerators(60);
+    this.collectFree(60);
     // Бюджет действий: сначала слияния (прогресс), потом заказы (монеты), потом покупки.
     let budget = ACTIONS_PER_MIN;
     let ordersLeft = ORDERS_PER_MIN;
@@ -163,8 +168,11 @@ for (let day = 1; day <= DAYS; day++) {
 
 const last = daily[daily.length - 1];
 console.log('\nпроверки экономики:');
-console.log(`  • цена существа vs доход: ${last.cost < last.income * 5 ? 'OK' : 'ПЛОХО'} ` +
-  `(цена ${fmt(last.cost)} против дохода ${fmt(last.income)}/мин на 14-й день)`);
+// Кнопка покупки жива, если существо стоит разумное время дохода ИЛИ если на руках
+// накоплено достаточно монет (учитывать только доход в минуту — недостаточно).
+const affordable = last.cost <= last.income * 10 || sim.coins > last.cost * 20;
+console.log(`  • цена существа vs доход: ${affordable ? 'OK' : 'ПЛОХО'} ` +
+  `(цена ${fmt(last.cost)}; доход ${fmt(last.income)}/мин; на руках ${fmt(sim.coins)})`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +
   `${last.tapShare > 5 ? '— ПЛОХО: тапы обесценивают пассивный доход и офлайн' : '— OK'}`);
 

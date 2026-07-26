@@ -34,7 +34,7 @@ export const S = {
   streakLast: '',
   quests: { date: '', progress: { merges: 0, orders: 0, spawns: 0, taps: 0 } as Record<string, number>, claimed: [] as boolean[] },
   discovered: [] as boolean[][],
-  genLast: [] as number[],
+  freeLast: 0,              // когда последний раз брали бесплатное существо
   freeChestLast: 0,
   event: { id: '', points: 0, claimed: [] as boolean[] },
   // экономика-кликер
@@ -78,7 +78,6 @@ export function interstitialAllowed(): boolean {
 function ensureShapes() {
   while (S.discovered.length < CHAINS.length) S.discovered.push([]);
   S.discovered.forEach((arr, i) => { while (arr.length < CHAINS[i].names.length) arr.push(false); });
-  while (S.genLast.length < CHAINS.length) S.genLast.push(0);
   while (S.itemsZ.length < ZONES.length) S.itemsZ.push([]);
   while (S.zoneUnlocked.length < ZONES.length) S.zoneUnlocked.push(false);
   while (S.quests.claimed.length < QUESTS.length) S.quests.claimed.push(false);
@@ -120,7 +119,7 @@ export function resetProgress() {
   Object.assign(S, {
     coins: 0, gems: 0, itemsZ: [[]], zone: 0, zoneUnlocked: [true], rowUnlocked: false,
     streakDay: 0, streakLast: '', quests: { date: '', progress: { merges: 0, orders: 0, spawns: 0, taps: 0 }, claimed: [] },
-    discovered: [], genLast: [], freeChestLast: 0, event: { id: '', points: 0, claimed: [] },
+    discovered: [], freeLast: 0, freeChestLast: 0, event: { id: '', points: 0, claimed: [] },
     spawnBought: 0, incomeRate: 0, boostUntil: 0, boostMult: 1, customNames: {},
     battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, wins: 0,
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, ordersDone: 0,

@@ -33,6 +33,9 @@ const RU: Record<string, string> = {
   'common.cancel': 'Отмена',
 
   'hud.creature': 'Существо ({cost}🪙)',
+  'hud.spawnFree': '🎁 Существо бесплатно!',
+  'hud.freeIn': '🎁 бесплатно через {n} с',
+  'hud.freeSoon': 'Не хватает монет — бесплатное через {n} с',
   'hud.incomeAd': '🎬 Доход ×{mult} (2 мин)',
   'hud.boostOn': 'Доход ×{mult}!',
   'hud.sec': 'с',
@@ -47,8 +50,6 @@ const RU: Record<string, string> = {
   'nav.pedia': 'Мемпедия',
   'nav.settings': 'Ещё',
   'nav.arena': 'АРЕНА',
-  'gen.ready': 'ГОТОВ',
-  'gen.wait': 'Ещё {n} с',
 
   'order.label': 'Ролик с:\n{name}\n🪙 {reward}',
   'order.missing': 'Нет такого существа',
@@ -204,6 +205,9 @@ const EN: Record<string, string> = {
   'common.cancel': 'Cancel',
 
   'hud.creature': 'Creature ({cost}🪙)',
+  'hud.spawnFree': '🎁 Free creature!',
+  'hud.freeIn': '🎁 free in {n}s',
+  'hud.freeSoon': 'Not enough coins — free one in {n}s',
   'hud.incomeAd': '🎬 Income ×{mult} (2 min)',
   'hud.boostOn': 'Income ×{mult}!',
   'hud.sec': 's',
@@ -217,8 +221,6 @@ const EN: Record<string, string> = {
   'nav.pedia': 'Mempedia',
   'nav.settings': 'More',
   'nav.arena': 'ARENA',
-  'gen.ready': 'READY',
-  'gen.wait': '{n} s left',
 
   'order.label': 'Video with:\n{name}\n🪙 {reward}',
   'order.missing': 'No such creature',
@@ -374,6 +376,9 @@ const TR: Record<string, string> = {
   'common.cancel': 'İptal',
 
   'hud.creature': 'Yaratık ({cost}🪙)',
+  'hud.spawnFree': '🎁 Bedava yaratık!',
+  'hud.freeIn': '🎁 {n} sn sonra bedava',
+  'hud.freeSoon': 'Yeterli altın yok — {n} sn sonra bedava',
   'hud.incomeAd': '🎬 Gelir ×{mult} (2 dk)',
   'hud.boostOn': 'Gelir ×{mult}!',
   'hud.sec': 'sn',
@@ -387,8 +392,6 @@ const TR: Record<string, string> = {
   'nav.pedia': 'Mempedi',
   'nav.settings': 'Diğer',
   'nav.arena': 'ARENA',
-  'gen.ready': 'HAZIR',
-  'gen.wait': '{n} sn kaldı',
 
   'order.label': 'Video:\n{name}\n🪙 {reward}',
   'order.missing': 'Böyle bir yaratık yok',

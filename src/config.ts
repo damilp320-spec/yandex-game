@@ -15,7 +15,9 @@ export const SECRET_CHANCE = 0.067;
 export const SECRET_CHAIN = 8; // индекс цепочки sixseven в CHAINS
 
 // Поле 5×6: крупные существа. 6-й ряд (index 5) заперт — «space pressure» (PLAN.md §16).
-export const GRID = { cols: 5, rows: 6, cell: 126, x: 45, y: 336 };
+// Клетки выросли с 126 до 134: место освободилось после переноса генераторов вниз,
+// и оно ушло в размер существ — их проще и приятнее перетаскивать пальцем.
+export const GRID = { cols: 5, rows: 6, cell: 134, x: 25, y: 268 };
 
 // Экономика в духе Steal a Brainrot: существа на поле пассивно приносят монеты.
 export const INCOME = {
@@ -40,7 +42,11 @@ export const GOLDEN = { intervalMs: 90_000, lifeMs: 8000, rewardSec: 120, minRew
 export const OFFLINE_MIN_COINS = 5;
 
 export const INTERSTITIAL = { minGapMs: 180_000, sessionWarmupMs: 180_000, everyNOrders: 4 };
-export const GEN = { cooldownMs: 90_000 };
+
+// Бесплатное существо по кулдауну. Раньше это были четыре кнопки-генератора вверху
+// экрана (по 90 с на цепочку) — тянуться к ним большим пальцем неудобно, поэтому
+// они слиты в одну кнопку внизу. 25 с ≈ та же суммарная выдача, что 4 × 90 с.
+export const GEN = { cooldownMs: 25_000 };
 
 export const PRICES = {
   chestGems: 25,

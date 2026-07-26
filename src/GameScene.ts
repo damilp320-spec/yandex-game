@@ -20,10 +20,7 @@ export class GameScene extends Phaser.Scene {
   private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
   private grid: (Item | null)[][] = [];
   private orders: Order[] = [];
-  private genEntries: {
-    chain: number; text: Phaser.GameObjects.Text;
-    ring: Phaser.GameObjects.Graphics; icon: Phaser.GameObjects.Image;
-  }[] = [];
+  private spawnBar?: Phaser.GameObjects.Graphics;
   private coinsText!: Phaser.GameObjects.Text;
   private gemsText!: Phaser.GameObjects.Text;
   private incomeText!: Phaser.GameObjects.Text;
@@ -62,7 +59,6 @@ export class GameScene extends Phaser.Scene {
   async create() {
     this.grid = Array.from({ length: GRID.rows }, () => Array(GRID.cols).fill(null));
     this.orders = [];
-    this.genEntries = [];
     const hadSave = await restore();
     this.drawZoneBg();
     setMuted(!S.soundOn); // выбор игрока из сейва
@@ -82,7 +78,6 @@ export class GameScene extends Phaser.Scene {
     if (this.evCfg) generateSprites(this, [this.evCfg], EVENT_CHAIN_INDEX);
 
     this.drawBoard();
-    this.drawGenerators();
     this.drawHud();
     this.makeOrders();
 
@@ -107,7 +102,7 @@ export class GameScene extends Phaser.Scene {
     this.syncBattleWeek();
     this.time.addEvent({ delay: INCOME.periodMs, loop: true, callback: () => this.incomeTick() });
     this.time.addEvent({ delay: GOLDEN.intervalMs, loop: true, callback: () => this.spawnGolden() });
-    this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tickGenerators() });
+    this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tickSpawnButton() });
     this.time.addEvent({ delay: 10_000, loop: true, callback: () => { this.persistBoard(); sdk.submitScore('weekly_merges', S.score); } });
   }
 
@@ -375,57 +370,49 @@ export class GameScene extends Phaser.Scene {
     this.persistBoard();
   }
 
-  // ---------- генераторы ----------
-  /** Кнопка-генератор: кольцо заполняется по кулдауну, готовый светится и «дышит». */
-  private drawGenerators() {
-    const chains = ZONES[S.zone].chains;
-    chains.forEach((ch, i) => {
-      const x = W / 2 - (chains.length - 1) * 80 + i * 160, y = 290;
-      this.add.circle(x, y, 36, 0x2a1f4d, 0.95);
-      const ring = this.add.graphics({ x, y });
-      const icon = this.add.image(x, y, textureKey(ch, 0)).setDisplaySize(56, 56).setInteractive();
-      const text = this.add.text(x, y + 30, '', { fontFamily: FONT, fontSize: '15px', color: '#7fdcff', fontStyle: '700' })
-        .setOrigin(0.5).setStroke('#1a1230', 4);
-      this.genEntries.push({ chain: ch, text, ring, icon });
-      icon.on('pointerdown', () => this.tapGenerator(ch));
-    });
-    this.tickGenerators();
+  // ---------- получение существ ----------
+  /**
+   * Одна кнопка вместо четырёх генераторов наверху: пока кулдаун не вышел, существо
+   * можно купить за монеты, а как выйдет — взять бесплатно. Кнопка живёт в зоне
+   * большого пальца, и у игрока всегда один понятный способ добыть существо.
+   */
+  private freeLeft() { return GEN.cooldownMs - (Date.now() - S.freeLast); }
+
+  private tickSpawnButton() {
+    const left = this.freeLeft();
+    const free = left <= 0;
+    this.spawnLabel?.setText(free
+      ? t('hud.spawnFree')
+      : `${t('hud.creature', { cost: this.spawnCost() })}\n${t('hud.freeIn', { n: Math.ceil(left / 1000) })}`);
+    this.spawnLabel?.setFontSize(free ? 21 : 17);
+    // Полоска кулдауна по нижней кромке кнопки — прогресс виден без чтения цифр.
+    const g = this.spawnBar;
+    if (!g) return;
+    g.clear();
+    if (free) {
+      g.fillStyle(0x7fdc8f, 0.9); g.fillRoundedRect(-124, 20, 248, 6, 3);
+      return;
+    }
+    g.fillStyle(0x000000, 0.35); g.fillRoundedRect(-124, 20, 248, 6, 3);
+    g.fillStyle(0xffb84d, 1); g.fillRoundedRect(-124, 20, 248 * (1 - left / GEN.cooldownMs), 6, 3);
   }
 
-  private tapGenerator(ch: number) {
-    const left = GEN.cooldownMs - (Date.now() - S.genLast[ch]);
-    if (left > 0) { failSound(); ui.toast(this, W / 2, 260, t('gen.wait', { n: Math.ceil(left / 1000) }), '#ff7070'); return; }
-    const cell = this.findEmpty();
-    if (!cell) { failSound(); ui.toast(this, W / 2, 260, t('common.boardFull'), '#ff7070'); return; }
-    S.genLast[ch] = Date.now();
-    this.spawnItem(ch, 0, ...cell);
-    S.quests.progress.spawns++;
-    this.refreshHud();
-  }
-
-  private tickGenerators() {
-    this.genEntries.forEach(({ chain, text, ring, icon }) => {
-      const left = GEN.cooldownMs - (Date.now() - S.genLast[chain]);
-      const ready = left <= 0;
-      text.setText(ready ? t('gen.ready') : `${Math.ceil(left / 1000)}${t('hud.sec')}`)
-        .setColor(ready ? '#7fdcff' : '#c9beee');
-      icon.setAlpha(ready ? 1 : 0.45);
-      ring.clear();
-      ring.lineStyle(4, 0x4a3a80, 0.9);
-      ring.beginPath(); ring.arc(0, 0, 40, 0, Math.PI * 2); ring.strokePath();
-      ring.lineStyle(4, ready ? CHAINS[chain].color : 0x7fdcff, 1);
-      ring.beginPath();
-      ring.arc(0, 0, 40, -Math.PI / 2, ready ? Math.PI * 1.5 : -Math.PI / 2 + Math.PI * 2 * (1 - left / GEN.cooldownMs));
-      ring.strokePath();
-      // готовый генератор мягко пульсирует — видно, что можно тапнуть
-      if (ready && !icon.getData('pulse')) {
-        icon.setData('pulse', this.tweens.add({ targets: icon, scale: { from: icon.scale, to: icon.scale * 1.1 }, yoyo: true, repeat: -1, duration: 700 }));
-      } else if (!ready && icon.getData('pulse')) {
-        (icon.getData('pulse') as Phaser.Tweens.Tween).stop();
-        icon.setData('pulse', null);
-        icon.setDisplaySize(56, 56);
-      }
-    });
+  /**
+   * Случайная цепочка — но с поддавками: если на поле лежит «одинокое» существо
+   * первого уровня, в 70% случаев выдаём ему пару. Чистый рандом при четырёх
+   * цепочках слишком часто оставлял игрока с четырьмя разными существами.
+   */
+  private smartChain(): number {
+    const pool = ZONES[S.zone].chains as number[];
+    if (this.evCfg && Math.random() < 0.25) return EVENT_CHAIN_INDEX; // событийные — приоритетом
+    const counts = new Map<number, number>();
+    for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) {
+      const it = this.grid[r][c];
+      if (it?.level === 0) counts.set(it.chain, (counts.get(it.chain) ?? 0) + 1);
+    }
+    const lonely = pool.filter(ch => (counts.get(ch) ?? 0) % 2 === 1);
+    if (lonely.length && Math.random() < 0.7) return Phaser.Math.RND.pick(lonely) as number;
+    return Phaser.Math.RND.pick(pool) as number;
   }
 
   // ---------- HUD ----------
@@ -449,10 +436,12 @@ export class GameScene extends Phaser.Scene {
     ui.button(this, 520, 126, 320, 44, `🗺️ ${t(`zone.${ZONES[S.zone].id}`)}`, 0x2e6d9d, () => this.zonesPanel(), 18);
 
     // Действия основного цикла — по краям, чтобы центр остался под главную кнопку.
-    const spawnBtn = ui.button(this, 148, 1130, 268, 58, '', 0x5a48a8, () => this.trySpawn(), 22);
+    const spawnBtn = ui.button(this, 148, 1124, 268, 62, '', 0x5a48a8, () => this.trySpawn(), 21);
     this.spawnLabel = spawnBtn.list[1] as Phaser.GameObjects.Text; // [graphics, text, hit]
+    this.spawnLabel.setAlign('center').setLineSpacing(-2);
+    this.spawnBar = this.add.graphics({ x: 148, y: 1124 }); // полоска кулдауна поверх кнопки
     // Rewarded-точка: игрок сам меняет ролик на буст дохода (PLAN.md §4).
-    ui.button(this, 572, 1130, 268, 58, t('hud.incomeAd', { mult: INCOME.boostAdMult }), 0x2e7d5b, () =>
+    ui.button(this, 572, 1124, 268, 62, t('hud.incomeAd', { mult: INCOME.boostAdMult }), 0x2e7d5b, () =>
       sdk.showRewarded(() => {
         // если активен более сильный буст — реклама продлевает его, а не понижает
         S.boostMult = Date.now() < S.boostUntil ? Math.max(S.boostMult, INCOME.boostAdMult) : INCOME.boostAdMult;
@@ -580,24 +569,34 @@ export class GameScene extends Phaser.Scene {
     this.gemsText.setText(`${S.gems}`);
     const boost = Date.now() < S.boostUntil ? ` ×${S.boostMult}` : '';
     this.incomeText.setText(`+${this.totalIncome()}/5${t('hud.sec')}${boost}`);
-    this.spawnLabel?.setText(t('hud.creature', { cost: this.spawnCost() }));
+    this.tickSpawnButton(); // подпись кнопки зависит от кулдауна, а не только от цены
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
     this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
     this.checkTips();
   }
 
+  /** Бесплатно, если кулдаун вышел; иначе за монеты по растущей цене. */
   private trySpawn() {
+    const free = this.freeLeft() <= 0;
     const cost = this.spawnCost();
-    if (S.coins < cost) { failSound(); ui.toast(this, W / 2, 1160, t('common.notEnoughCoins'), '#ff7070'); return; }
+    if (!free && S.coins < cost) {
+      failSound();
+      ui.toast(this, 148, 1080, t('hud.freeSoon', { n: Math.ceil(this.freeLeft() / 1000) }), '#ff7070');
+      return;
+    }
     const cell = this.findEmpty();
-    if (!cell) { failSound(); ui.toast(this, W / 2, 1160, t('common.boardFull'), '#ff7070'); return; }
-    S.coins -= cost;
-    S.spawnBought++;
-    // Во время события 25% новых существ — событийные; остальные — из цепочек локации.
-    const chain = this.evCfg && Math.random() < 0.25 ? EVENT_CHAIN_INDEX : (Phaser.Math.RND.pick(ZONES[S.zone].chains) as number);
-    this.spawnItem(chain, 0, ...cell);
+    if (!cell) { failSound(); ui.toast(this, 148, 1080, t('common.boardFull'), '#ff7070'); return; }
+    if (free) {
+      S.freeLast = Date.now();
+    } else {
+      S.coins -= cost;
+      S.spawnBought++; // цена растёт только от покупок за монеты
+    }
+    this.spawnItem(this.smartChain(), 0, ...cell);
     S.quests.progress.spawns++;
+    if (free) coinSound();
+    this.tickSpawnButton();
     this.refreshHud();
   }
 
