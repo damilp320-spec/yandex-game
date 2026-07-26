@@ -77,6 +77,21 @@ export function panel(s: Phaser.Scene, title: string, onClose?: () => void): Pha
   return root;
 }
 
+/**
+ * Элемент нижней навигации: иконка сверху, короткая подпись снизу, без рамки.
+ * Иконки вместо кнопок с текстом разгружают экран — панель читается одним взглядом.
+ */
+export function navItem(s: Phaser.Scene, x: number, y: number, icon: string, label: string,
+  cb: () => void): Phaser.GameObjects.Container {
+  const c = s.add.container(x, y);
+  const ic = s.add.text(0, -14, icon, { fontSize: '30px' }).setOrigin(0.5);
+  const tx = s.add.text(0, 18, label, { fontFamily: FONT, fontSize: '15px', color: '#c9beee', fontStyle: '600' }).setOrigin(0.5);
+  const hit = s.add.rectangle(0, 0, 112, 76, 0xffffff, 0.001).setInteractive();
+  c.add([ic, tx, hit]);
+  hit.on('pointerdown', () => s.tweens.add({ targets: c, scale: 0.9, duration: 60, yoyo: true, onComplete: cb }));
+  return c;
+}
+
 /** «Пилюля» ресурса в HUD; возвращает текст для обновления значения. */
 export function pill(s: Phaser.Scene, x: number, y: number, w: number, icon: string, color: number): Phaser.GameObjects.Text {
   const g = s.add.graphics();

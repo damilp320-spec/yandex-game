@@ -15,7 +15,7 @@ export const SECRET_CHANCE = 0.067;
 export const SECRET_CHAIN = 8; // индекс цепочки sixseven в CHAINS
 
 // Поле 5×6: крупные существа. 6-й ряд (index 5) заперт — «space pressure» (PLAN.md §16).
-export const GRID = { cols: 5, rows: 6, cell: 126, x: 45, y: 344 };
+export const GRID = { cols: 5, rows: 6, cell: 126, x: 45, y: 336 };
 
 // Экономика в духе Steal a Brainrot: существа на поле пассивно приносят монеты.
 export const INCOME = {

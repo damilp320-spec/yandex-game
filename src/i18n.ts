@@ -41,6 +41,12 @@ const RU: Record<string, string> = {
   'hud.quests': '📋 Задания',
   'hud.pedia': '📖 Мемпедия',
   'hud.arena': '🏆 Арена',
+  // Короткие подписи под иконками нижней панели — места мало.
+  'nav.shop': 'Магазин',
+  'nav.quests': 'Задания',
+  'nav.pedia': 'Мемпедия',
+  'nav.settings': 'Ещё',
+  'nav.arena': 'АРЕНА',
   'gen.ready': 'ГОТОВ',
   'gen.wait': 'Ещё {n} с',
 
@@ -118,6 +124,7 @@ const RU: Record<string, string> = {
   'battle.speed': '▶ ×2',
 
   'wb.title': '⚔️ Битва недели',
+  'wb.short': '⚔️ Битва недели',
   'wb.desc': '{a}  VS  {b}\n\nВыбери сторону — очки идут за слияния\nсуществ твоей команды. В конце недели —\nкристаллы по очкам. Сторону не сменить!',
   'wb.join': 'За {name}!',
   'wb.mine': '⭐ Твоя команда',
@@ -205,6 +212,11 @@ const EN: Record<string, string> = {
   'hud.quests': '📋 Quests',
   'hud.pedia': '📖 Mempedia',
   'hud.arena': '🏆 Arena',
+  'nav.shop': 'Shop',
+  'nav.quests': 'Quests',
+  'nav.pedia': 'Mempedia',
+  'nav.settings': 'More',
+  'nav.arena': 'ARENA',
   'gen.ready': 'READY',
   'gen.wait': '{n} s left',
 
@@ -282,6 +294,7 @@ const EN: Record<string, string> = {
   'battle.speed': '▶ ×2',
 
   'wb.title': '⚔️ Battle of the Week',
+  'wb.short': '⚔️ Weekly battle',
   'wb.desc': '{a}  VS  {b}\n\nPick a side — you score points for merging\nyour team\'s creatures. Gems at the end of\nthe week. You can\'t switch sides!',
   'wb.join': 'Team {name}!',
   'wb.mine': '⭐ Your team',
@@ -369,6 +382,11 @@ const TR: Record<string, string> = {
   'hud.quests': '📋 Görevler',
   'hud.pedia': '📖 Mempedi',
   'hud.arena': '🏆 Arena',
+  'nav.shop': 'Mağaza',
+  'nav.quests': 'Görevler',
+  'nav.pedia': 'Mempedi',
+  'nav.settings': 'Diğer',
+  'nav.arena': 'ARENA',
   'gen.ready': 'HAZIR',
   'gen.wait': '{n} sn kaldı',
 
@@ -446,6 +464,7 @@ const TR: Record<string, string> = {
   'battle.speed': '▶ ×2',
 
   'wb.title': '⚔️ Haftanın Savaşı',
+  'wb.short': '⚔️ Haftalık savaş',
   'wb.desc': '{a}  VS  {b}\n\nBir taraf seç — takımının yaratıklarını\nbirleştirdikçe puan kazanırsın. Hafta sonunda\nkristal. Taraf değiştirilemez!',
   'wb.join': '{name} tarafı!',
   'wb.mine': '⭐ Senin takımın',

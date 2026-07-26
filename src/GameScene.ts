@@ -32,6 +32,7 @@ export class GameScene extends Phaser.Scene {
   private comboLast = 0;
   private golden?: Phaser.GameObjects.Image;
   private questBadge!: Phaser.GameObjects.Arc;
+  private arenaBadge!: Phaser.GameObjects.Arc;
   private arenaBtn!: Phaser.GameObjects.Container;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
@@ -428,44 +429,74 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- HUD ----------
+  /**
+   * Экран разгружен сознательно: арена — ключевая механика, поэтому она главная
+   * кнопка по центру нижней панели, остальные разделы — компактные иконки по краям.
+   * Настройки уехали из верхнего угла в навигацию, «Битва недели» — внутрь арены,
+   * а скорость дохода переехала в пилюлю монет: было три пилюли и десять кнопок.
+   */
   private drawHud() {
-    this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontFamily: FONT, fontSize: '40px', color: '#ffe066', fontStyle: '900' })
-      .setOrigin(0.5).setStroke('#120c22', 8).setShadow(0, 3, 'rgba(0,0,0,0.5)', 4);
-    ui.button(this, 682, 36, 62, 52, '⚙️', 0x3a3a55, () => this.settingsPanel(), 24);
+    this.add.text(W / 2, 30, 'BRAINROT LAB: MERGE', { fontFamily: FONT, fontSize: '30px', color: '#ffe066', fontStyle: '900' })
+      .setOrigin(0.5).setStroke('#120c22', 6).setShadow(0, 2, 'rgba(0,0,0,0.5)', 4);
+
+    // Монеты + скорость дохода в одной пилюле, кристаллы во второй.
+    this.coinsText = ui.pill(this, 24, 76, 400, '🪙', 0xffe066);
+    this.incomeText = this.add.text(408, 76, '', { fontFamily: FONT, fontSize: '19px', color: '#7fdc8f', fontStyle: '700' }).setOrigin(1, 0.5);
+    this.gemsText = ui.pill(this, 444, 76, 252, '💎', 0xc9a6ff);
+
     if (this.ev)
-      ui.button(this, 165, 134, 290, 44, `${this.ev.emoji} ${t(`event.${this.ev.id}`).split(' ')[0]} · ${daysLeft(this.ev)}${t('hud.day')}`, 0xa8542e, () => this.eventPanel(), 18);
-    ui.button(this, 445, 134, 250, 44, `🗺️ ${t(`zone.${ZONES[S.zone].id}`)}`, 0x2e6d9d, () => this.zonesPanel(), 18);
-    ui.button(this, 635, 134, 110, 44, '⚔️', 0x9d2e4d, () => this.battlePanel(), 22);
-    this.coinsText = ui.pill(this, 24, 88, 220, '🪙', 0xffe066);
-    this.gemsText = ui.pill(this, 264, 88, 170, '💎', 0xc9a6ff);
-    this.incomeText = ui.pill(this, 454, 88, 242, '💰', 0x7fdc8f);
+      ui.button(this, 175, 126, 310, 44, `${this.ev.emoji} ${t(`event.${this.ev.id}`).split(' ')[0]} · ${daysLeft(this.ev)}${t('hud.day')}`, 0xa8542e, () => this.eventPanel(), 18);
+    ui.button(this, 520, 126, 320, 44, `🗺️ ${t(`zone.${ZONES[S.zone].id}`)}`, 0x2e6d9d, () => this.zonesPanel(), 18);
 
-    // Четыре таба ровно по ширине экрана: 12px поля по краям, 8px между кнопками
-    // (при прежних 170px последняя кнопка выходила за правый край на 10px).
-    const tabs: [string, number, () => void][] = [
-      [t('hud.shop'), 0x8f5ad0, () => openShop(this, this.api)],
-      [t('hud.quests'), 0x2e6d9d, () => this.questsPanel()],
-      [t('hud.pedia'), 0x5a48a8, () => this.memePanel()],
-      [t('hud.arena'), 0x9d5a2e, () => this.arenaPanel()],
-    ];
-    tabs.forEach(([label, color, cb], i) => {
-      const btn = ui.button(this, 96 + i * 176, 1132, 168, 56, label, color, cb, 18);
-      if (i === 3) this.arenaBtn = btn;
-      if (i === 1) this.questBadge = this.add.circle(96 + i * 176 + 76, 1108, 9, 0xff5050).setDepth(1);
-    });
-
-    const spawnBtn = ui.button(this, 200, 1210, 360, 64, '', 0x5a48a8, () => this.trySpawn());
+    // Действия основного цикла — по краям, чтобы центр остался под главную кнопку.
+    const spawnBtn = ui.button(this, 148, 1130, 268, 58, '', 0x5a48a8, () => this.trySpawn(), 22);
     this.spawnLabel = spawnBtn.list[1] as Phaser.GameObjects.Text; // [graphics, text, hit]
     // Rewarded-точка: игрок сам меняет ролик на буст дохода (PLAN.md §4).
-    ui.button(this, 555, 1210, 290, 64, t('hud.incomeAd', { mult: INCOME.boostAdMult }), 0x2e7d5b, () =>
+    ui.button(this, 572, 1130, 268, 58, t('hud.incomeAd', { mult: INCOME.boostAdMult }), 0x2e7d5b, () =>
       sdk.showRewarded(() => {
         // если активен более сильный буст — реклама продлевает его, а не понижает
         S.boostMult = Date.now() < S.boostUntil ? Math.max(S.boostMult, INCOME.boostAdMult) : INCOME.boostAdMult;
         S.boostUntil = Date.now() + INCOME.boostAdMs;
         this.refreshHud(); persist();
-        ui.toast(this, 555, 1160, t('hud.boostOn', { mult: S.boostMult }), '#7fdc8f');
-      }), 21);
+        ui.toast(this, 572, 1080, t('hud.boostOn', { mult: S.boostMult }), '#7fdc8f');
+      }), 19);
+
+    this.drawNavBar();
     this.refreshHud();
+  }
+
+  /** Нижняя панель: иконки по краям, арена — приподнятая главная кнопка в центре. */
+  private drawNavBar() {
+    const g = this.add.graphics();
+    g.fillStyle(0x1b1436, 0.98);
+    g.fillRoundedRect(0, 1166, W, 130, { tl: 26, tr: 26, bl: 0, br: 0 });
+    g.lineStyle(2, 0x5a48a8, 0.7);
+    g.beginPath(); g.moveTo(0, 1167); g.lineTo(W, 1167); g.strokePath();
+
+    ui.navItem(this, 78, 1222, '💎', t('nav.shop'), () => openShop(this, this.api));
+    ui.navItem(this, 200, 1222, '📋', t('nav.quests'), () => this.questsPanel());
+    this.questBadge = this.add.circle(232, 1196, 9, 0xff5050).setDepth(2);
+    ui.navItem(this, 520, 1222, '📖', t('nav.pedia'), () => this.memePanel());
+    ui.navItem(this, 642, 1222, '⚙️', t('nav.settings'), () => this.settingsPanel());
+
+    // Главная кнопка: приподнята в зазор между кнопками действий, со свечением.
+    const hero = this.add.container(W / 2, 1184).setDepth(3);
+    const hg = this.add.graphics();
+    hg.lineStyle(6, 0xffb84d, 0.22); hg.strokeRoundedRect(-75, -53, 150, 106, 26); // мягкое свечение
+    hg.fillStyle(0x000000, 0.4); hg.fillRoundedRect(-70, -44, 140, 96, 22);
+    hg.fillGradientStyle(0xd4703a, 0xd4703a, 0x9d5a2e, 0x9d5a2e, 1);
+    hg.fillRoundedRect(-70, -48, 140, 96, 22);
+    hg.fillStyle(0xffffff, 0.16); hg.fillRoundedRect(-66, -44, 132, 40, 18);
+    hg.lineStyle(3, 0xffd07a, 0.9); hg.strokeRoundedRect(-70, -48, 140, 96, 22);
+    const hit = this.add.rectangle(0, 0, 140, 96, 0xffffff, 0.001).setInteractive();
+    hero.add([hg,
+      this.add.text(0, -18, '🏆', { fontSize: '38px' }).setOrigin(0.5),
+      this.add.text(0, 26, t('nav.arena'), { fontFamily: FONT, fontSize: '18px', color: '#fff', fontStyle: '800' }).setOrigin(0.5),
+      hit]);
+    hit.on('pointerdown', () => this.tweens.add({ targets: hero, scale: 0.94, duration: 60, yoyo: true, onComplete: () => this.arenaPanel() }));
+    this.arenaBtn = hero;
+    // Точка на главной кнопке, когда за кубки можно забрать награду.
+    this.arenaBadge = this.add.circle(W / 2 + 58, 1140, 10, 0xff5050).setDepth(4);
   }
 
   // ---------- настройки: звук (важно для модерации), язык, сброс ----------
@@ -552,6 +583,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnLabel?.setText(t('hud.creature', { cost: this.spawnCost() }));
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
+    this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
     this.checkTips();
   }
 
@@ -838,7 +870,9 @@ export class GameScene extends Phaser.Scene {
           tada(); this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
         }, 16));
     });
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 336, 340, 48, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 19));
+    // «Битва недели» жила отдельной кнопкой в шапке — перенесена сюда, к состязаниям.
+    this.addTo(p, ui.button(this, W / 2 - 92, H / 2 + 336, 176, 48, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 17));
+    this.addTo(p, ui.button(this, W / 2 + 96, H / 2 + 336, 176, 48, t('wb.short'), 0x9d2e4d, () => { p.destroy(); this.battlePanel(); }, 17));
   }
 
   /** Пикер бойца: существо переезжает с поля в команду (клетка освобождается). */
