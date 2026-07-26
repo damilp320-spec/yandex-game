@@ -1,6 +1,6 @@
 // Магазин: витрина Яндекс.Платежей + синки кристаллов. Дизайн и психология — PLAN.md §16.
 import Phaser from 'phaser';
-import { W, H, PRICES, ENERGY, SECRET_CHANCE } from './config';
+import { W, H, PRICES, INCOME, SECRET_CHANCE } from './config';
 import { S, persist } from './state';
 import * as sdk from './sdk';
 import { button, panel, toast } from './ui';
@@ -63,9 +63,12 @@ export function openShop(s: Phaser.Scene, api: ShopApi) {
     S.gems -= PRICES.chestGems; root.destroy(); rollChest(api, s, W / 2, H / 2);
   }));
   y += 82;
-  root.add(button(s, W / 2, y, 600, 66, `⚡ Полная энергия — ${PRICES.energyGems}💎`, 0x2e6d9d, () => {
-    if (S.gems < PRICES.energyGems) { failSound(); toast(s, W / 2, y, 'Не хватает 💎', '#ff7070'); return; }
-    S.gems -= PRICES.energyGems; S.energy = ENERGY.max; coinSound(); api.refreshHud(); persist(); toast(s, W / 2, y, 'Энергия полна!');
+  root.add(button(s, W / 2, y, 600, 66, `⚡ Буст дохода ×${INCOME.boostGemMult} (10 мин) — ${PRICES.boostGems}💎`, 0x2e6d9d, () => {
+    if (S.gems < PRICES.boostGems) { failSound(); toast(s, W / 2, y, 'Не хватает 💎', '#ff7070'); return; }
+    S.gems -= PRICES.boostGems;
+    S.boostMult = INCOME.boostGemMult;
+    S.boostUntil = Date.now() + INCOME.boostGemMs;
+    coinSound(); api.refreshHud(); persist(); toast(s, W / 2, y, `Доход ×${INCOME.boostGemMult}!`);
   }));
   y += 100;
 

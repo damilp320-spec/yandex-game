@@ -66,5 +66,8 @@ export const jingleFanfare = () => {
 };
 
 export const coinSound = () => { if (custom('coin')) return; note(880, 0, 0.07, 'square', 0.09); note(1320, 0.06, 0.1, 'square', 0.09); };
+
+/** Клик по существу: короткий блип, тон растёт с комбо — «музыкальная лесенка». */
+export const clickSound = (combo: number) => { if (custom('click')) return; note(520 + combo * 90, 0, 0.06, 'square', 0.08); };
 export const failSound = () => { if (custom('fail')) return; note(150, 0, 0.22, 'sawtooth', 0.07); };
 export const tada = () => { if (custom('tada')) return; [523, 659, 784, 1047].forEach((f, i) => note(f, i * 0.09, 0.18)); };

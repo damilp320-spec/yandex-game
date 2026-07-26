@@ -1,12 +1,13 @@
 import Phaser from 'phaser';
-import { W, H, GRID, ENERGY, OFFLINE, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT } from './config';
+import { W, H, GRID, INCOME, SPAWN, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, ORDER_REWARD_BY_LEVEL, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
+import { queueSkinLoads } from './assets';
 import { track } from './analytics';
-import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today } from './state';
+import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
-import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, failSound, tada, registerSoundScene } from './audio';
+import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene } from './audio';
 import { openShop, ShopApi } from './shop';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
@@ -19,7 +20,11 @@ export class GameScene extends Phaser.Scene {
   private genEntries: { chain: number; text: Phaser.GameObjects.Text }[] = [];
   private coinsText!: Phaser.GameObjects.Text;
   private gemsText!: Phaser.GameObjects.Text;
-  private energyText!: Phaser.GameObjects.Text;
+  private incomeText!: Phaser.GameObjects.Text;
+  private spawnLabel?: Phaser.GameObjects.Text;
+  private comboCount = 0;
+  private comboLast = 0;
+  private golden?: Phaser.GameObjects.Image;
   private questBadge!: Phaser.GameObjects.Arc;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
@@ -35,6 +40,11 @@ export class GameScene extends Phaser.Scene {
   private chainCfg(i: number): Chain { return i === EVENT_CHAIN_INDEX && this.evCfg ? this.evCfg : CHAINS[i]; }
 
   constructor() { super('game'); }
+
+  preload() {
+    // Кастомные PNG-скины игрока грузятся ПОД штатными ключами (см. assets.ts).
+    queueSkinLoads(this.load, activeEvent()?.id);
+  }
 
   async create() {
     this.grid = Array.from({ length: GRID.rows }, () => Array(GRID.cols).fill(null));
@@ -77,9 +87,64 @@ export class GameScene extends Phaser.Scene {
     }
     sdk.gameplayStart();
 
-    this.time.addEvent({ delay: ENERGY.regenMs, loop: true, callback: () => { S.energy = Math.min(ENERGY.max, S.energy + 1); this.refreshHud(); } });
+    this.input.dragDistanceThreshold = 12; // короткий тап = клик по существу, не драг
+    this.syncBattleWeek();
+    this.time.addEvent({ delay: INCOME.periodMs, loop: true, callback: () => this.incomeTick() });
+    this.time.addEvent({ delay: GOLDEN.intervalMs, loop: true, callback: () => this.spawnGolden() });
     this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tickGenerators() });
     this.time.addEvent({ delay: 10_000, loop: true, callback: () => { this.persistBoard(); sdk.setLeaderboardScore(S.score); } });
+  }
+
+  // ---------- пассивный доход и кликер ----------
+  private totalIncome(): number {
+    let sum = 0;
+    for (let r = 0; r < GRID.rows; r++) for (let c = 0; c < GRID.cols; c++) {
+      const it = this.grid[r][c]; if (it) sum += incomeOf(it.chain, it.level);
+    }
+    return sum;
+  }
+
+  private incomeTick() {
+    const inc = this.totalIncome();
+    if (!inc) return;
+    const mult = Date.now() < S.boostUntil ? S.boostMult : 1;
+    S.coins += inc * mult;
+    this.refreshHud();
+    this.tweens.add({ targets: this.incomeText, scale: { from: 1.25, to: 1 }, duration: 250 });
+  }
+
+  private tapCreature(item: Item) {
+    const now = Date.now();
+    this.comboCount = now - this.comboLast < 1200 ? Math.min(5, this.comboCount + 1) : 1;
+    this.comboLast = now;
+    const gain = Math.ceil(incomeOf(item.chain, item.level) / 2) * this.comboCount;
+    S.coins += gain;
+    S.quests.progress.taps++;
+    clickSound(this.comboCount);
+    this.tweens.add({ targets: item.obj, scale: { from: 0.85, to: 1 }, duration: 120 });
+    ui.toast(this, item.obj.x, item.obj.y - 30, this.comboCount > 1 ? `+${gain} ×${this.comboCount}` : `+${gain}`, '#ffe066');
+    this.refreshHud();
+  }
+
+  /** «Золотой брейнрот» пролетает по экрану — успей тапнуть (2 минуты дохода разом). */
+  private spawnGolden() {
+    if (this.golden?.active) return;
+    const chain = Phaser.Math.RND.pick(ZONES[S.zone].chains) as number;
+    const y = Phaser.Math.Between(400, 1000);
+    const img = this.add.image(-70, y, textureKey(chain, 4)).setDisplaySize(96, 96)
+      .setTint(0xffd700).setDepth(15).setInteractive();
+    this.golden = img;
+    this.tweens.add({ targets: img, x: W + 70, duration: GOLDEN.lifeMs, onComplete: () => img.destroy() });
+    this.tweens.add({ targets: img, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 300 });
+    img.on('pointerdown', () => {
+      const reward = Math.max(GOLDEN.minReward, this.totalIncome() * Math.round(GOLDEN.rewardSec * 1000 / INCOME.periodMs));
+      S.coins += reward;
+      jingleFanfare();
+      track('golden_tap');
+      ui.toast(this, img.x, img.y - 40, `✨ ЗОЛОТОЙ! +${reward}🪙`);
+      img.destroy();
+      this.refreshHud(); persist();
+    });
   }
 
   private maxRows() { return S.rowUnlocked ? GRID.rows : GRID.rows - 1; }
@@ -96,11 +161,15 @@ export class GameScene extends Phaser.Scene {
       .catch(() => {});
   }
 
-  /** Тематический фон локации — рисуется процедурно. */
+  /** Тематический фон локации: кастомный PNG (skins/bg_<id>.png), иначе — процедурный. */
   private drawZoneBg() {
     this.cameras.main.setBackgroundColor(ZONES[S.zone].bg);
-    const g = this.add.graphics().setDepth(-10);
     const id = ZONES[S.zone].id;
+    if (this.textures.exists(`skinbg_${id}`)) {
+      this.add.image(W / 2, H / 2, `skinbg_${id}`).setDisplaySize(W, H).setDepth(-10);
+      return;
+    }
+    const g = this.add.graphics().setDepth(-10);
     if (id === 'lab') { // лаборатория: пузырьки в колбах и мягкое свечение
       g.fillGradientStyle(0x241645, 0x241645, 0x120c22, 0x120c22, 1); g.fillRect(0, 0, W, H);
       g.fillStyle(0x8f7bd8, 0.06);
@@ -112,6 +181,12 @@ export class GameScene extends Phaser.Scene {
       beams.forEach(([col, bx]) => { g.fillStyle(col, 0.07); g.fillTriangle(bx, 0, bx - 170, H, bx + 170, H); });
       g.fillStyle(0xffffff, 0.08);
       for (let i = 0; i < 22; i++) g.fillCircle((i * 137 + 40) % W, (i * 211) % H, 3);
+    } else if (id === 'space') { // космо-база: звёзды и планета
+      g.fillGradientStyle(0x10163a, 0x10163a, 0x05070f, 0x05070f, 1); g.fillRect(0, 0, W, H);
+      g.fillStyle(0xffffff, 0.5);
+      for (let i = 0; i < 40; i++) g.fillCircle((i * 149 + 30) % W, (i * 233 + 20) % H, (i % 3) + 1);
+      g.fillStyle(0x7a4ec0, 0.35); g.fillCircle(W - 90, 190, 70);
+      g.lineStyle(6, 0x9f7ad8, 0.35); g.strokeEllipse(W - 90, 190, 220, 60);
     } else { // ночной дозор: луна, туман и свет фонаря
       g.fillGradientStyle(0x2c1c16, 0x2c1c16, 0x140c0a, 0x140c0a, 1); g.fillRect(0, 0, W, H);
       g.fillStyle(0xf2e2b0, 0.1); g.fillCircle(W - 110, 150, 95);
@@ -181,8 +256,8 @@ export class GameScene extends Phaser.Scene {
   private spawnItem(chain: number, level: number, r: number, c: number, silent = false) {
     const { x, y } = this.cellXY(r, c);
     const box = this.add.container(x, y);
-    const img = this.add.image(0, 0, textureKey(chain, level)).setDisplaySize(94, 94);
-    const badge = this.add.text(32, 32, `${level + 1}`, { fontSize: '18px', color: RARITY[level].color, fontStyle: 'bold' }).setOrigin(0.5);
+    const img = this.add.image(0, 0, textureKey(chain, level)).setDisplaySize(114, 114);
+    const badge = this.add.text(42, 42, `${level + 1}`, { fontFamily: FONT, fontSize: '20px', color: RARITY[level].color, fontStyle: '800' }).setOrigin(0.5).setStroke('#1a1230', 4);
     box.add([img, badge]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
     const item: Item = { chain, level, obj: box };
     this.grid[r][c] = item;
@@ -206,8 +281,12 @@ export class GameScene extends Phaser.Scene {
 
   private wireDrag(item: Item) {
     const box = item.obj;
+    let dragged = false;
+    box.on('dragstart', () => { dragged = true; });
+    box.on('pointerup', () => { if (!dragged) this.tapCreature(item); });
     box.on('drag', (_p: unknown, dx: number, dy: number) => { box.setPosition(dx, dy).setDepth(10); });
     box.on('dragend', () => {
+      dragged = false;
       box.setDepth(0);
       const from = this.findItem(item)!;
       const to = this.cellAt(box.x, box.y);
@@ -238,6 +317,8 @@ export class GameScene extends Phaser.Scene {
     S.quests.progress.merges++;
     S.score += level * 2;
     if (level >= 4) track('merge_high', { level });
+    if (S.battle.side >= 0 && a.chain === S.battle.side) S.battle.points += level; // очки «Битвы недели»
+    if (level === 5 && !S.customNames[a.chain]) this.renamePanel(a.chain); // легендарка заслуживает имени
     if (a.chain === EVENT_CHAIN_INDEX && this.ev) {
       S.event.points += level * 2;
       ui.toast(this, W / 2, GRID.y + 140, `${this.ev.emoji} +${level * 2} очков события`);
@@ -252,7 +333,7 @@ export class GameScene extends Phaser.Scene {
   private drawGenerators() {
     const chains = ZONES[S.zone].chains;
     chains.forEach((ch, i) => {
-      const x = W / 2 - (chains.length - 1) * 80 + i * 160, y = 308;
+      const x = W / 2 - (chains.length - 1) * 80 + i * 160, y = 296;
       this.add.circle(x, y, 34, 0x2a1f4d).setStrokeStyle(3, CHAINS[ch].color);
       const icon = this.add.image(x, y, textureKey(ch, 0)).setDisplaySize(58, 58).setInteractive();
       this.genEntries.push({ chain: ch, text: this.add.text(x, y + 44, '', { fontSize: '18px', color: '#7fdcff' }).setOrigin(0.5) });
@@ -284,37 +365,51 @@ export class GameScene extends Phaser.Scene {
     this.add.text(W / 2, 36, 'BRAINROT LAB: MERGE', { fontFamily: FONT, fontSize: '40px', color: '#ffe066', fontStyle: '900' })
       .setOrigin(0.5).setStroke('#120c22', 8).setShadow(0, 3, 'rgba(0,0,0,0.5)', 4);
     if (this.ev)
-      ui.button(this, 250, 134, 380, 44, `${this.ev.emoji} ${this.ev.title} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 20);
-    ui.button(this, 590, 134, 220, 44, `🗺️ ${ZONES[S.zone].title}`, 0x2e6d9d, () => this.zonesPanel(), 19);
-    this.coinsText = ui.pill(this, 24, 88, 210, '🪙', 0xffe066);
-    this.gemsText = ui.pill(this, 254, 88, 190, '💎', 0xc9a6ff);
-    this.energyText = ui.pill(this, 464, 88, 232, '⚡', 0x7fdcff);
+      ui.button(this, 165, 134, 290, 44, `${this.ev.emoji} ${this.ev.title.split(' ')[0]} · ${daysLeft(this.ev)}д`, 0xa8542e, () => this.eventPanel(), 18);
+    ui.button(this, 445, 134, 250, 44, `🗺️ ${ZONES[S.zone].title}`, 0x2e6d9d, () => this.zonesPanel(), 18);
+    ui.button(this, 635, 134, 110, 44, '⚔️', 0x9d2e4d, () => this.battlePanel(), 22);
+    this.coinsText = ui.pill(this, 24, 88, 220, '🪙', 0xffe066);
+    this.gemsText = ui.pill(this, 264, 88, 170, '💎', 0xc9a6ff);
+    this.incomeText = ui.pill(this, 454, 88, 242, '💰', 0x7fdc8f);
 
     ui.button(this, 140, 1132, 200, 56, '💎 Магазин', 0x8f5ad0, () => openShop(this, this.api), 22);
     ui.button(this, 360, 1132, 200, 56, '📋 Задания', 0x2e6d9d, () => this.questsPanel(), 22);
     this.questBadge = this.add.circle(450, 1108, 10, 0xff5050).setDepth(1);
     ui.button(this, 580, 1132, 200, 56, '📖 Мемпедия', 0x5a48a8, () => this.memePanel(), 22);
 
-    ui.button(this, 200, 1210, 360, 64, `Существо (-${ENERGY.spawnCost}⚡)`, 0x5a48a8, () => this.trySpawn());
-    // Rewarded-точка: игрок сам меняет ролик на энергию (PLAN.md §4).
-    ui.button(this, 555, 1210, 290, 64, `+${ENERGY.adRefill}⚡ за рекламу`, 0x2e7d5b, () =>
-      sdk.showRewarded(() => { S.energy = Math.min(ENERGY.max, S.energy + ENERGY.adRefill); this.refreshHud(); ui.toast(this, 555, 1160, `+${ENERGY.adRefill}⚡`, '#7fdcff'); }), 24);
+    const spawnBtn = ui.button(this, 200, 1210, 360, 64, '', 0x5a48a8, () => this.trySpawn());
+    this.spawnLabel = spawnBtn.list[1] as Phaser.GameObjects.Text; // [graphics, text, hit]
+    // Rewarded-точка: игрок сам меняет ролик на буст дохода (PLAN.md §4).
+    ui.button(this, 555, 1210, 290, 64, `🎬 Доход ×${INCOME.boostAdMult} (2 мин)`, 0x2e7d5b, () =>
+      sdk.showRewarded(() => {
+        // если активен более сильный буст — реклама продлевает его, а не понижает
+        S.boostMult = Date.now() < S.boostUntil ? Math.max(S.boostMult, INCOME.boostAdMult) : INCOME.boostAdMult;
+        S.boostUntil = Date.now() + INCOME.boostAdMs;
+        this.refreshHud(); persist();
+        ui.toast(this, 555, 1160, `Доход ×${S.boostMult}!`, '#7fdc8f');
+      }), 21);
     this.refreshHud();
   }
+
+  private spawnCost(): number { return Math.floor(SPAWN.baseCost * Math.pow(SPAWN.growth, S.spawnBought)); }
 
   private refreshHud() {
     this.coinsText.setText(`${S.coins}`);
     this.gemsText.setText(`${S.gems}`);
-    this.energyText.setText(`${Math.floor(S.energy)}/${ENERGY.max}`);
+    const boost = Date.now() < S.boostUntil ? ` ×${S.boostMult}` : '';
+    this.incomeText.setText(`+${this.totalIncome()}/5с${boost}`);
+    this.spawnLabel?.setText(`Существо (${this.spawnCost()}🪙)`);
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
   }
 
   private trySpawn() {
-    if (S.energy < ENERGY.spawnCost) { failSound(); ui.toast(this, W / 2, 1160, 'Нет энергии!', '#ff7070'); return; }
+    const cost = this.spawnCost();
+    if (S.coins < cost) { failSound(); ui.toast(this, W / 2, 1160, 'Не хватает монет!', '#ff7070'); return; }
     const cell = this.findEmpty();
     if (!cell) { failSound(); ui.toast(this, W / 2, 1160, 'Поле заполнено!', '#ff7070'); return; }
-    S.energy -= ENERGY.spawnCost;
+    S.coins -= cost;
+    S.spawnBought++;
     // Во время события 25% новых существ — событийные; остальные — из цепочек локации.
     const chain = this.evCfg && Math.random() < 0.25 ? EVENT_CHAIN_INDEX : (Phaser.Math.RND.pick(ZONES[S.zone].chains) as number);
     this.spawnItem(chain, 0, ...cell);
@@ -491,24 +586,99 @@ export class GameScene extends Phaser.Scene {
     const found = S.discovered.flat().filter(Boolean).length;
     const p = ui.panel(this, `📖 Мемпедия ${found}/${total}`);
     // Сетка портретов: ряд — цепочка, колонка — уровень. Тап по портрету — имя.
-    const x0 = W / 2 - 180, y0 = H / 2 - 348;
+    const x0 = W / 2 - 180, y0 = H / 2 - 352;
     CHAINS.forEach((cfg, ci) => {
-      const y = y0 + ci * 78;
-      this.addTo(p, this.add.image(x0 - 100, y, textureKey(ci, 0)).setDisplaySize(46, 46).setAlpha(0.85));
+      const y = y0 + ci * 60;
+      this.addTo(p, this.add.image(x0 - 100, y, textureKey(ci, 0)).setDisplaySize(42, 42).setAlpha(0.85));
       cfg.names.forEach((name, lv) => {
         const x = x0 + lv * 72;
         if (S.discovered[ci][lv]) {
-          const img = this.add.image(x, y, textureKey(ci, lv)).setDisplaySize(62, 62).setInteractive();
-          img.on('pointerdown', () => ui.toast(this, W / 2, y, `${name} · ${RARITY[lv].name}`, RARITY[lv].color));
+          const img = this.add.image(x, y, textureKey(ci, lv)).setDisplaySize(54, 54).setInteractive();
+          const shown = lv === 5 && S.customNames[ci] ? `«${S.customNames[ci]}» (${name})` : name;
+          img.on('pointerdown', () => ui.toast(this, W / 2, y, `${shown} · ${RARITY[lv].name}`, RARITY[lv].color));
           this.addTo(p, img);
         } else {
-          const box = this.add.rectangle(x, y, 60, 60, 0x161028, 0.9).setStrokeStyle(2, 0x4a3a80).setInteractive();
+          const box = this.add.rectangle(x, y, 52, 52, 0x161028, 0.9).setStrokeStyle(2, 0x4a3a80).setInteractive();
           box.on('pointerdown', () => ui.toast(this, W / 2, y, ci === SECRET_CHAIN ? 'Секрет… ищи в сундуках 👀' : 'Ещё не открыт', '#8f86b8'));
           this.addTo(p, box);
-          this.addTo(p, this.add.text(x, y, '?', { fontFamily: FONT, fontSize: '26px', color: '#5a5474', fontStyle: '700' }).setOrigin(0.5));
+          this.addTo(p, this.add.text(x, y, '?', { fontFamily: FONT, fontSize: '24px', color: '#5a5474', fontStyle: '700' }).setOrigin(0.5));
         }
       });
     });
+  }
+
+  // ---------- «Битва недели»: команды персонажей, очки за слияния, повод для споров ----------
+  private battleTeams(): [number, number] {
+    const week = isoWeek();
+    const h = [...week].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const a = h % CHAINS.length;
+    let b = (a + 1 + ((h >> 3) % (CHAINS.length - 1))) % CHAINS.length;
+    if (b === a) b = (a + 1) % CHAINS.length;
+    return [a, b];
+  }
+
+  private syncBattleWeek() {
+    const week = isoWeek();
+    if (S.battle.week === week) return;
+    if (S.battle.side >= 0 && S.battle.points > 0) { // награда за прошлую неделю
+      const reward = Math.min(30, 5 + Math.floor(S.battle.points / 10));
+      S.gems += reward;
+      ui.toast(this, W / 2, H / 2, `⚔️ Битва недели окончена: +${reward}💎 за ${S.battle.points} очков!`);
+    }
+    S.battle = { week, side: -1, points: 0 };
+    persist();
+  }
+
+  private battlePanel() {
+    const [ta, tb] = this.battleTeams();
+    const p = ui.panel(this, '⚔️ Битва недели');
+    this.addTo(p, this.add.text(W / 2, H / 2 - 310,
+      `${CHAINS[ta].names[5]}  VS  ${CHAINS[tb].names[5]}\n\nВыбери сторону — очки идут за слияния\nсуществ твоей команды. В конце недели —\nкристаллы по очкам. Сторону не сменить!`,
+      { fontFamily: FONT, fontSize: '23px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    [ta, tb].forEach((ch, i) => {
+      const x = W / 2 - 150 + i * 300;
+      this.addTo(p, this.add.image(x, H / 2 - 140, textureKey(ch, 3)).setDisplaySize(140, 140));
+      if (S.battle.side < 0)
+        this.addTo(p, ui.button(this, x, H / 2 - 30, 250, 62, `За ${CHAINS[ch].names[0]}!`, i ? 0x9d2e4d : 0x2e6d9d, () => {
+          S.battle.side = ch;
+          jingleFanfare(); track('battle_join', { chain: CHAINS[ch].id });
+          persist(true); p.destroy(); this.battlePanel();
+        }, 20));
+      else if (S.battle.side === ch)
+        this.addTo(p, this.add.text(x, H / 2 - 30, '⭐ Твоя команда', { fontFamily: FONT, fontSize: '22px', color: '#ffe066', fontStyle: '700' }).setOrigin(0.5));
+    });
+    if (S.battle.side >= 0) {
+      this.addTo(p, this.add.text(W / 2, H / 2 + 80, `Твои очки: ${S.battle.points} ⚔️`, { fontFamily: FONT, fontSize: '30px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 170, 480, 66, '📣 Позвать друзей в мою команду', 0x2e7d5b, () => {
+        navigator.clipboard?.writeText(`Я топлю за команду «${CHAINS[S.battle.side].names[5]}» в Битве недели Brainrot Lab: Merge (${S.battle.points} очков) ⚔️ А ты за кого? Игра — на Яндекс Играх!`).catch(() => {});
+        track('battle_share');
+        ui.toast(this, W / 2, H / 2 + 120, 'Скопировано — кидай в чат!');
+      }, 22));
+    }
+  }
+
+  // ---------- имя для легендарки: пользовательский контент = скриншоты ----------
+  private renamePanel(chain: number) {
+    const p = ui.panel(this, '⭐ ЛЕГЕНДАРКА!');
+    this.addTo(p, this.add.image(W / 2, H / 2 - 230, textureKey(chain, 5)).setDisplaySize(190, 190));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 80,
+      `Ты вырастил «${CHAINS[chain].names[5]}»!\nТакое существо заслуживает СОБСТВЕННОЕ имя.\nОно останется в твоей Мемпедии навсегда.`,
+      { fontFamily: FONT, fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 420, 70, '✏️ Дать имя', 0x8f5ad0, () => {
+      const nm = window.prompt('Имя для твоей легендарки:', S.customNames[chain] ?? '');
+      if (nm?.trim()) {
+        S.customNames[chain] = nm.trim().slice(0, 24);
+        track('legend_named');
+        persist(true);
+        ui.toast(this, W / 2, H / 2, `Теперь это «${S.customNames[chain]}»!`);
+      }
+    }));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 480, 64, '📣 Похвастаться легендаркой', 0x2e7d5b, () => {
+      const nm = S.customNames[chain] ?? CHAINS[chain].names[5];
+      navigator.clipboard?.writeText(`Моя легендарка «${nm}» уже качает в Brainrot Lab: Merge 🏆 Покажи свою! Игра — на Яндекс Играх.`).catch(() => {});
+      track('legend_share');
+      ui.toast(this, W / 2, H / 2 + 110, 'Скопировано — кидай в чат!');
+    }, 22));
   }
 
   // ---------- секретный «67»: главный вирусный крючок ----------
@@ -544,12 +714,12 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- офлайн-доход ----------
   private offlinePopup() {
-    const hours = Math.min((Date.now() - S.lastSeen) / 3.6e6, OFFLINE.capHours);
-    // Каждая открытая локация увеличивает офлайн-доход.
-    const earned = Math.floor(hours * OFFLINE.coinsPerHour * S.zoneUnlocked.filter(Boolean).length);
-    if (earned < 5) return;
+    // Офлайн-доход = доход поля на момент выхода × время (кап 8 часов).
+    const seconds = Math.min((Date.now() - S.lastSeen) / 1000, INCOME.offlineCapHours * 3600);
+    const earned = Math.floor(S.incomeRate * (seconds * 1000 / INCOME.periodMs));
+    if (earned < OFFLINE_MIN_COINS) return;
     const p = ui.panel(this, '💤 Пока вас не было…');
-    this.addTo(p, this.add.text(W / 2, H / 2 - 200, `Существа заработали:\n🪙 ${earned}`, { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 200, `Твои брейнроты наработали:\n🪙 ${earned}`, { fontSize: '38px', color: '#fff', align: 'center' }).setOrigin(0.5));
     const claim = (mult: number) => { S.coins += earned * mult; coinSound(); this.refreshHud(); persist(); p.destroy(); };
     this.addTo(p, ui.button(this, W / 2, H / 2, 420, 72, `Забрать ${earned}🪙`, 0x5a48a8, () => claim(1)));
     this.addTo(p, ui.button(this, W / 2, H / 2 + 100, 480, 72, `🎬 Забрать ×2 (${earned * 2}🪙)`, 0x2e7d5b,
@@ -571,6 +741,7 @@ export class GameScene extends Phaser.Scene {
       const it = this.grid[r][c]; if (it) items.push([r, c, it.chain, it.level]);
     }
     S.itemsZ[S.zone] = items;
+    S.incomeRate = this.totalIncome(); // для офлайн-начисления
     persist(force);
   }
 }

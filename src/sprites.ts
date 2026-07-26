@@ -146,6 +146,40 @@ function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number) 
       g.fillStyle(0xd8dde4); g.fillRoundedRect(cx - size * 0.85, cy + size * 0.98, size * 0.45, size * 0.2, 5); g.fillRoundedRect(cx + size * 0.45, cy + size * 0.98, size * 0.45, size * 0.2, 5);
       break;
     }
+    case 'capy': { // капибара-космонавт: максимально чиллит
+      if (lv >= 3) { g.fillStyle(0xdfe8f2, 0.9); g.fillCircle(cx, cy - size * 0.35, size * 0.95); g.fillStyle(c); } // шлем
+      g.fillRoundedRect(cx - size * 0.95, cy - size * 0.35, size * 1.9, size * 1.25, size * 0.5); // тело-кирпичик
+      g.fillStyle(shade(c, 1.2)); g.fillRoundedRect(cx - size * 0.55, cy - size * 0.75, size * 1.3, size * 0.75, size * 0.35); // морда
+      g.fillStyle(shade(c, 0.7)); g.fillCircle(cx - size * 0.45, cy - size * 0.8, 7); g.fillCircle(cx + size * 0.55, cy - size * 0.8, 7); // ушки
+      g.fillStyle(0x3a2a1a); g.fillEllipse(cx + size * 0.05, cy - size * 0.45, 16, 10); // нос
+      g.fillStyle(shade(c, 1.3), 0.4); g.fillEllipse(cx - size * 0.45, cy - size * 0.1, size * 0.6, size * 0.5);
+      g.lineStyle(4, shade(c, 0.6)); g.strokeRoundedRect(cx - size * 0.95, cy - size * 0.35, size * 1.9, size * 1.25, size * 0.5);
+      break;
+    }
+    case 'ufo': { // тарелло: гость с огоньком
+      g.fillStyle(0x9fe0ef, 0.55); g.fillEllipse(cx, cy - size * 0.5, size * 1.1, size * 0.95); // купол
+      g.fillStyle(c); g.fillEllipse(cx, cy, size * 2.2, size * 0.75); // тарелка
+      g.fillStyle(shade(c, 0.7)); g.fillEllipse(cx, cy + size * 0.18, size * 1.7, size * 0.4);
+      g.fillStyle(0xffe066); [-0.7, 0, 0.7].forEach(k => g.fillCircle(cx + k * size, cy + size * 0.05, 6)); // огни
+      if (lv >= 2) { g.fillStyle(0xffe066, 0.16); g.fillTriangle(cx - size * 0.6, cy + size * 0.2, cx + size * 0.6, cy + size * 0.2, cx, cy + size * 1.15); } // луч
+      g.fillStyle(shade(c, 1.3), 0.45); g.fillEllipse(cx - size * 0.6, cy - size * 0.1, size * 0.7, size * 0.25);
+      g.lineStyle(4, shade(c, 0.6)); g.strokeEllipse(cx, cy, size * 2.2, size * 0.75);
+      break;
+    }
+    case 'noodle': { // спагетти-джентльмен
+      g.lineStyle(Math.max(6, size * 0.22), c);
+      [-0.55, -0.18, 0.18, 0.55].forEach(k => { // пучок «прядей»
+        g.beginPath();
+        g.moveTo(cx + k * size, cy - size);
+        g.lineTo(cx + k * size * 0.6, cy);
+        g.lineTo(cx + k * size, cy + size);
+        g.strokePath();
+      });
+      g.fillStyle(shade(c, 1.2)); g.fillEllipse(cx, cy - size * 0.15, size * 1.5, size * 0.9); // «лицо»-клубок
+      if (lv >= 3) { g.fillStyle(0x2a2438); g.fillRoundedRect(cx - size * 0.5, cy - size * 1.15, size, size * 0.28, 6); g.fillRoundedRect(cx - size * 0.3, cy - size * 1.55, size * 0.6, size * 0.45, 6); } // цилиндр
+      g.lineStyle(4, shade(c, 0.6)); g.strokeEllipse(cx, cy - size * 0.15, size * 1.5, size * 0.9);
+      break;
+    }
     default: { // событийная цепочка: солнце/снежинка-звезда
       g.fillCircle(cx, cy, size);
       g.lineStyle(5, shade(c, 1.3));
