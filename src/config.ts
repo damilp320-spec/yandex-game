@@ -213,6 +213,69 @@ export const SEASON = {
 };
 export const seasonId = (d = new Date()) => d.toISOString().slice(0, 7);
 
+/**
+ * Рамки профиля: лиговые (за пиковую лигу сезона) плюс особые — например «Лаборант»
+ * за полный премиум-трек журнала. Рамки не продаются: их носят как заслугу.
+ */
+export const FRAMES = [
+  ...LEAGUES.map(l => ({ key: l.key, color: l.color, emblem: l.emblem })),
+  { key: 'pass', color: 0x8f5ad0, emblem: '🧪' },
+];
+export const frameByKey = (key: string) => FRAMES.find(f => f.key === key) ?? FRAMES[0];
+/** Ранг рамки для автовыбора «лучшей»: лиги по порогу кубков, особые — выше всех. */
+export const frameRank = (key: string) => {
+  const i = LEAGUES.findIndex(l => l.key === key);
+  return i >= 0 ? i : LEAGUES.length;
+};
+
+/**
+ * «Лабораторный журнал» — сезонный пропуск, главный мид-терм крючок и одновременно
+ * синк кристаллов. Сезон общий с ареной (календарный месяц).
+ *
+ * Очки капают за обычную игру: слияние, победа, забранный квест, золотой брейнрот.
+ * Порог тира выведен симуляцией: активный игрок из sim делает ~264 очка в день, то
+ * есть закрывает 20 тиров за ~15 дней, а средний игрок к концу месяца проходит
+ * две трети — как и задумано (полный трек должен быть достижим, но не автоматически).
+ *
+ * Премиум за кристаллы, а НЕ отдельный товар за деньги: это синк уже проданной
+ * валюты, и он даёт только удвоение наград и косметику — никакой силы в бою.
+ * Бесплатный трек проходится целиком без покупки.
+ */
+export const PASS = {
+  tiers: 20,
+  perTier: 200,
+  premiumGems: 450,
+  points: { merge: 1, win: 5, quest: 10, golden: 2 },
+};
+
+/**
+ * Награда тира. `coinsMin` — не фиксированная сумма, а МИНУТЫ дохода поля: фиксированные
+ * суммы монет обесцениваются за неделю, а «две минуты дохода» ценны на любом этапе.
+ */
+export interface PassReward { coinsMin?: number; gems?: number; egg?: EggType; chest?: boolean; frame?: string }
+export const PASS_TRACK: PassReward[] = [
+  { coinsMin: 2 },
+  { gems: 5 },
+  { egg: 'common' },
+  { coinsMin: 3 },
+  { gems: 8 },
+  { chest: true },
+  { coinsMin: 4 },
+  { egg: 'rare' },
+  { gems: 10 },
+  { coinsMin: 5 },
+  { chest: true },
+  { gems: 12 },
+  { egg: 'common' },
+  { coinsMin: 6 },
+  { gems: 15 },
+  { chest: true },
+  { egg: 'rare' },
+  { coinsMin: 8 },
+  { gems: 20 },
+  { egg: 'gold', gems: 50, frame: 'pass' }, // финал: рамка «Лаборант» — только премиум
+];
+
 export const leagueOf = (cups: number) =>
   LEAGUES.reduce((cur, l) => (cups >= l.cups ? l : cur), LEAGUES[0]);
 export const nextLeague = (cups: number) => LEAGUES.find(l => l.cups > cups) ?? null;

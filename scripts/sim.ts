@@ -16,7 +16,7 @@
 //   инкубатор: яйцо за каждую INCUBATOR.winEvery-ю победу и за новую лигу, вылупление
 //   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES, PASS } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
@@ -73,6 +73,7 @@ class Sim {
   eggsHatched = 0;
   eggCreatures = 0;   // сколько существ реально попало на поле из яиц
   eggCoins = 0;       // и сколько монет вместо них, когда поле было забито
+  passPoints = 0;     // очки «Лабораторного журнала»
 
   get chains() { return ZONES[this.zone].chains; }
 
@@ -130,6 +131,7 @@ class Sim {
     this.board.splice(bj, 1);
     this.board[bi].level++;
     this.merges++;
+    this.passPoints += PASS.points.merge;
     return true;
   }
 
@@ -173,7 +175,7 @@ class Sim {
       const en = makeEnemy();
       const power = teamPower(en.team, false) * en.factor;
       const win = simulateBattle(S.team, en.team, 1, en.factor);
-      if (win) { this.coins += 150 + Math.floor(power / 5); this.wins++; }
+      if (win) { this.coins += 150 + Math.floor(power / 5); this.wins++; this.passPoints += PASS.points.win; }
       if (win && this.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
       const leagueBefore = leagueOf(this.cups);
       this.cups = Math.max(0, this.cups + cupsDelta(win, power));
@@ -304,6 +306,7 @@ const sim = new Sim();
 sim.board.push({ chain: 0, level: 0 }, { chain: 0, level: 0 });
 const daily: { day: number; income: number; cost: number; tapShare: number }[] = [];
 let legendaryDay = 0;
+const passByDay: number[] = [];
 let mutDays = 0; // сколько дней из DAYS мутация попала в текущую локацию игрока
 const zoneDays: string[] = []; // день, когда впервые появилось существо 6-го уровня
 for (let day = 1; day <= DAYS; day++) {
@@ -318,6 +321,8 @@ for (let day = 1; day <= DAYS; day++) {
     if (moved !== null) zoneDays.push(`${ZONES[sim.zone].id}: день ${moved}`);
     sim.offline(s < SESSIONS_PER_DAY - 1 ? 4 : 12); // между сессиями и ночь
   }
+  sim.passPoints += 4 * PASS.points.quest; // активный игрок забирает все дневные квесты
+  passByDay.push(sim.passPoints);
   if (!legendaryDay && sim.bestLevel >= 6) legendaryDay = day;
   const inc = sim.income;
   const perMin = inc * (60_000 / INCOME.periodMs);
@@ -344,6 +349,17 @@ console.log(`  • цена существа vs доход: ${affordable ? 'OK' 
   `(цена ${fmt(last.cost)}; доход ${fmt(last.income)}/мин; на руках ${fmt(sim.coins)})`);
 console.log(`  • первая легендарка (6 ур.): ${legendaryDay ? `день ${legendaryDay}` : 'не достигнута за 14 дней'}`);
 console.log(`  • переходы по локациям: ${zoneDays.length ? zoneDays.join(', ') : 'ни одной новой за 14 дней — проверь цены разблокировки'}`);
+{
+  // Трек должен закрываться активным игроком примерно к трём неделям: полный проход
+  // достижим, но не автоматически, а средний игрок доходит до двух третей.
+  const need = PASS.tiers * PASS.perTier;
+  const dayDone = passByDay.findIndex(p => p >= need) + 1;
+  const perDay = passByDay[passByDay.length - 1] / DAYS;
+  const est = dayDone || Math.ceil(need / perDay);
+  console.log(`  • журнал: ${Math.round(perDay)} очков/день у активного игрока → ` +
+    `20 тиров (${need}) за ~${est} дн. ${est >= 12 && est <= 25 ? '— OK' : '— проверь PASS.perTier'}`);
+  console.log(`    средний игрок (40% активности) к 30-му дню: ${Math.round(100 * Math.min(1, perDay * 0.4 * 30 / need))}% трека`);
+}
 console.log(`  • мутация дня попадала в локацию игрока ${mutDays} из ${DAYS} дней ` +
   `(в такие дни доход ×${MUTATION_MULT} у одной цепочки)`);
 console.log(`  • инкубатор: ${sim.eggsHatched} яиц за ${DAYS} дн. — ${sim.eggCreatures} существ на поле, ` +

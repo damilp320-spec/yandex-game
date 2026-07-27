@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, leagueByKey, LEAGUES, SEASON, seasonId, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -32,6 +32,7 @@ export class GameScene extends Phaser.Scene {
   private spawnLabel?: Phaser.GameObjects.Text;
   private eggLabel?: Phaser.GameObjects.Text;
   private mutChain = -1; // цепочка дня: её доход ×MUTATION_MULT
+  private passToastAt = 0;
   private eggBadge?: Phaser.GameObjects.Arc;
   private comboCount = 0;
   private comboLast = 0;
@@ -110,6 +111,7 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(4000, () => void this.platformPrompt('session'));
     }
     this.checkSeason();
+    this.syncPass();
     // Мутация дня: сообщаем один раз за сессию и только если цепочка доступна
     // игроку — иначе это шум про запертую локацию.
     if (!GameScene.mutShown && ZONES.some((z, i) => S.zoneUnlocked[i] && z.chains.includes(this.mutChain))) {
@@ -182,6 +184,7 @@ export class GameScene extends Phaser.Scene {
       S.coins += reward;
       jingleFanfare(); buzz(BUZZ.golden);
       S.stats.golden++;
+      this.addPassPoints(PASS.points.golden);
       track('golden_tap');
       ui.toast(this, img.x, img.y - 40, t('golden.tap', { n: reward }));
       img.destroy();
@@ -408,6 +411,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnItem(a.chain, level, ...at);
     jingleMerge(level, a.chain);
     S.quests.progress.merges++; S.stats.merges++;
+    this.addPassPoints(PASS.points.merge);
     S.score += level * 2;
     if (level >= 4) track('merge_high', { level });
     if (S.battle.side >= 0 && a.chain === S.battle.side) S.battle.points += level; // очки «Битвы недели»
@@ -538,7 +542,7 @@ export class GameScene extends Phaser.Scene {
     const hg = this.add.graphics();
     // Рамка профиля (заработана в сезоне) красит свечение главной кнопки — статус
     // виден на главном экране, а не только внутри арены.
-    const fr = this.frameLeague();
+    const fr = this.frameOf();
     hg.lineStyle(6, fr ? fr.color : 0xffb84d, fr ? 0.55 : 0.22);
     hg.strokeRoundedRect(-75, -53, 150, 106, 26);
     hg.fillStyle(0x000000, 0.4); hg.fillRoundedRect(-70, -44, 140, 96, 22);
@@ -683,7 +687,7 @@ export class GameScene extends Phaser.Scene {
     this.tickSpawnButton(); // подпись кнопки зависит от кулдауна, а не только от цены
     this.tickEgg();
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
-    this.questBadge?.setVisible(claimable);
+    this.questBadge?.setVisible(claimable || this.passClaimable());
     this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cupsBest >= m.cups));
     this.pediaBadge?.setVisible(anyAchClaimable());
     this.checkTips();
@@ -847,8 +851,9 @@ export class GameScene extends Phaser.Scene {
   // ---------- квесты ----------
   private questsPanel() {
     const p = ui.panel(this, t('quests.title'));
+    this.tabsFor(p, 'quests');
     QUESTS.forEach((q, i) => {
-      const y = H / 2 - 260 + i * 150;
+      const y = H / 2 - 250 + i * 145;
       const prog = Math.min(S.quests.progress[q.id], q.target);
       this.addTo(p, this.add.text(W / 2 - 290, y,
         t('quests.line', { label: t(`quest.${q.id}`), prog, target: q.target, coins: q.coins, gems: q.gems }),
@@ -858,10 +863,139 @@ export class GameScene extends Phaser.Scene {
       else if (prog >= q.target)
         this.addTo(p, ui.button(this, W / 2 + 210, y + 24, 170, 60, t('common.claim'), 0x2e7d5b, () => {
           S.quests.claimed[i] = true; S.coins += q.coins; S.gems += q.gems;
-          coinSound(); this.refreshHud(); persist(); p.destroy(); this.questsPanel();
+          this.addPassPoints(PASS.points.quest);
+          coinSound(); buzz(BUZZ.claim); this.refreshHud(); persist(); p.destroy(); this.questsPanel();
         }));
     });
     this.addTo(p, this.add.text(W / 2, H / 2 + 260, t('quests.footer'), { fontSize: '24px', color: '#8f86b8' }).setOrigin(0.5));
+  }
+
+  // ---------- «Лабораторный журнал»: сезонный трек ----------
+  /** Сезон журнала совпадает с сезоном арены; на стыке трек начинается заново. */
+  private syncPass() {
+    const now = seasonId();
+    if (S.pass.season === now) return;
+    S.pass = { season: now, points: 0, claimed: [], premium: S.pass.premium === now ? now : '' };
+    persist(true);
+  }
+
+  private passUnlocked() { return Math.min(PASS.tiers, Math.floor(S.pass.points / PASS.perTier)); }
+  private passPremium() { return S.pass.premium === seasonId(); }
+  private passClaimable() {
+    const un = this.passUnlocked();
+    return PASS_TRACK.some((_, i) => i < un && !S.pass.claimed[i]);
+  }
+
+  /**
+   * Очки журнала за обычную игру. Тост показываем не чаще раза в 10 секунд —
+   * иначе слияния превратят экран в поток цифр.
+   */
+  private addPassPoints(n: number) {
+    this.syncPass();
+    S.pass.points += n;
+    if (Date.now() - this.passToastAt > 10_000) {
+      this.passToastAt = Date.now();
+      ui.toast(this, 620, 160, t('pass.gained', { n }), '#c9a6ff');
+    }
+    this.refreshHud();
+  }
+
+  /** Читаемая награда тира; монеты — в минутах дохода, чтобы не обесценивались. */
+  private passRewardText(rw: PassReward): string {
+    const mult = this.passPremium() ? 2 : 1;
+    return [
+      rw.coinsMin && t('pass.coinsMin', { n: rw.coinsMin * mult }),
+      rw.gems && `${rw.gems * mult}💎`,
+      rw.egg && `🥚 ${t(`egg.${rw.egg}`)}${mult > 1 ? ' ×2' : ''}`,
+      rw.chest && `${t('event.chest')}${mult > 1 ? ' ×2' : ''}`,
+      rw.frame && `🖼️ ${this.frameName(rw.frame)} (${t('pass.premiumOnly')})`,
+    ].filter(Boolean).join(' + ');
+  }
+
+  private claimPassTier(i: number) {
+    const rw = PASS_TRACK[i];
+    const prem = this.passPremium();
+    const mult = prem ? 2 : 1;
+    S.pass.claimed[i] = true;
+    if (rw.coinsMin) {
+      const perMin = this.totalIncome() * (60_000 / INCOME.periodMs);
+      S.coins += Math.max(200, Math.round(perMin * rw.coinsMin)) * mult;
+    }
+    if (rw.gems) S.gems += rw.gems * mult;
+    if (rw.egg) { this.giveEgg(rw.egg); if (prem) this.giveEgg(rw.egg); }
+    if (rw.chest) { rollChest(this.api, this, W / 2, H / 2 + 200); if (prem) rollChest(this.api, this, W / 2, H / 2 + 240); }
+    // Рамка — единственная премиум-эксклюзивная награда трека.
+    if (rw.frame && prem && !S.frames.includes(rw.frame)) { S.frames.push(rw.frame); S.frame = rw.frame; }
+    tada(); buzz(BUZZ.claim);
+    track('pass_claim', { tier: i + 1, premium: prem });
+    this.refreshHud(); persist(true);
+  }
+
+  private passPanel() {
+    this.syncPass();
+    const un = this.passUnlocked();
+    const p = ui.panel(this, t('pass.title', { tier: un, total: PASS.tiers }));
+    this.tabsFor(p, 'pass');
+    // Прогресс до следующего тира
+    const inTier = S.pass.points % PASS.perTier;
+    const capped = un >= PASS.tiers;
+    const g = this.add.graphics();
+    g.fillStyle(0x161028, 0.9); g.fillRoundedRect(W / 2 - 280, H / 2 - 300, 560, 24, 12);
+    g.fillStyle(0x8f5ad0, 1); g.fillRoundedRect(W / 2 - 277, H / 2 - 297, 554 * (capped ? 1 : inTier / PASS.perTier), 18, 9);
+    this.addTo(p, g);
+    this.addTo(p, this.add.text(W / 2, H / 2 - 265,
+      capped ? t('pass.done') : t('pass.progress', { points: inTier, need: PASS.perTier }),
+      { fontFamily: FONT, fontSize: '21px', color: '#c9beee' }).setOrigin(0.5));
+
+    // Окно из пяти тиров вокруг первого незабранного — весь трек в окно не влезет.
+    const firstOpen = PASS_TRACK.findIndex((_, i) => !S.pass.claimed[i]);
+    const start = Math.max(0, Math.min(firstOpen < 0 ? PASS.tiers - 5 : firstOpen - 1, PASS.tiers - 5));
+    PASS_TRACK.slice(start, start + 5).forEach((rw, k) => {
+      const i = start + k;
+      const y = H / 2 - 190 + k * 92;
+      const open = i < un, claimed = !!S.pass.claimed[i];
+      this.addTo(p, ui.card(this, W / 2, y, 616, 80, claimed ? 0x2f4d3a : open ? 0x3d2f6e : 0x2a2247, 14));
+      this.addTo(p, this.add.text(W / 2 - 286, y - 16, t('pass.tier', { n: i + 1 }),
+        { fontFamily: FONT, fontSize: '21px', color: open ? '#ffe066' : '#8f86b8', fontStyle: '800' }).setOrigin(0, 0.5));
+      this.addTo(p, this.add.text(W / 2 - 286, y + 16, this.passRewardText(rw),
+        { fontFamily: FONT, fontSize: '18px', color: '#fff', wordWrap: { width: 400 } }).setOrigin(0, 0.5));
+      if (claimed) this.addTo(p, this.add.text(W / 2 + 240, y, '✅', { fontSize: '32px' }).setOrigin(0.5));
+      else if (open)
+        this.addTo(p, ui.button(this, W / 2 + 240, y, 120, 56, t('common.claim'), 0x2e7d5b, () => {
+          this.claimPassTier(i); p.destroy(); this.passPanel();
+        }, 18));
+      else
+        this.addTo(p, this.add.text(W / 2 + 240, y, t('pass.locked', { n: (i + 1) * PASS.perTier - S.pass.points }),
+          { fontFamily: FONT, fontSize: '16px', color: '#8f86b8', align: 'center', wordWrap: { width: 130 } }).setOrigin(0.5));
+    });
+
+    this.addTo(p, this.add.text(W / 2, H / 2 + 334, t('pass.how', PASS.points),
+      { fontFamily: FONT, fontSize: '18px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+    // Премиум — синк кристаллов: удвоение наград и рамка, но не сила в бою.
+    if (this.passPremium())
+      this.addTo(p, this.add.text(W / 2, H / 2 + 258, t('pass.bought'),
+        { fontFamily: FONT, fontSize: '22px', color: '#c9a6ff', fontStyle: '700' }).setOrigin(0.5));
+    else
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 256, 520, 62, t('pass.buy', { gems: PASS.premiumGems }), 0x8f5ad0, () => {
+        if (S.gems < PASS.premiumGems) { failSound(); ui.toast(this, W / 2, H / 2, t('common.notEnoughGems'), '#ff7070'); return; }
+        if (!window.confirm(t('pass.buyAsk', { id: S.pass.season, gems: PASS.premiumGems }))) return;
+        S.gems -= PASS.premiumGems;
+        S.pass.premium = seasonId();
+        tada(); track('pass_premium');
+        this.refreshHud(); persist(true); p.destroy(); this.passPanel();
+      }, 22));
+  }
+
+  /** Общий переключатель вкладок «Задания дня» / «Журнал». */
+  private tabsFor(p: Phaser.GameObjects.Container, cur: 'quests' | 'pass') {
+    const mk = (x: number, key: string, to: 'quests' | 'pass') =>
+      this.addTo(p, ui.button(this, x, H / 2 - 352, 300, 52, t(key), cur === to ? 0x2e7d5b : 0x3a3a55, () => {
+        if (cur === to) return;
+        p.destroy();
+        if (to === 'quests') this.questsPanel(); else this.passPanel();
+      }, 20));
+    mk(W / 2 - 158, 'pass.tabQuests', 'quests');
+    mk(W / 2 + 158, 'pass.tab', 'pass');
   }
 
   // ---------- локации ----------
@@ -1026,7 +1160,7 @@ export class GameScene extends Phaser.Scene {
     S.season = { id: now, peak: leagueIndex(S.cups) };
     const fresh = !S.frames.includes(league.key);
     if (fresh) S.frames.push(league.key);
-    if (!S.frame || leagueByKey(S.frame).cups < league.cups) S.frame = league.key; // надеваем лучшую
+    if (!S.frame || frameRank(S.frame) < frameRank(league.key)) S.frame = league.key; // надеваем лучшую
     S.gems += gems;
     track('season_end', { peak: league.key, cups: before });
     persist(true);
@@ -1059,8 +1193,11 @@ export class GameScene extends Phaser.Scene {
     return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate() + 1;
   }
 
-  /** Рамка профиля: цвет и эмблема надетой рамки (или текущей лиги, пока рамок нет). */
-  private frameLeague() { return S.frame ? leagueByKey(S.frame) : null; }
+  /** Надетая рамка профиля (null — рамок ещё нет). */
+  private frameOf() { return S.frame ? frameByKey(S.frame) : null; }
+
+  /** Имя рамки: у лиговых — название лиги, у особых — своё. */
+  private frameName(key: string) { return key === 'pass' ? t('frame.pass') : t(`league.${key}`); }
 
   // ---------- Арена: команда 5 бойцов, кубки, казарма, лидерборд ----------
   private arenaPanel() {
@@ -1144,9 +1281,9 @@ export class GameScene extends Phaser.Scene {
     this.addTo(p, this.add.text(W / 2, H / 2 + 242, t('season.now', { id: S.season.id || seasonId(), days: this.seasonDaysLeft() }),
       { fontFamily: FONT, fontSize: '20px', color: '#8f86b8' }).setOrigin(0.5));
     if (S.frames.length) {
-      const fr = this.frameLeague() ?? LEAGUES[0];
+      const fr = this.frameOf() ?? FRAMES[0];
       const chip = ui.chip(this, W / 2, H / 2 + 284, 420, 40,
-        `${fr.emblem} ${t(`league.${fr.key}`)} · ${t('season.frameHint')}`, `#${fr.color.toString(16).padStart(6, '0')}`);
+        `${fr.emblem} ${this.frameName(fr.key)} · ${t('season.frameHint')}`, `#${fr.color.toString(16).padStart(6, '0')}`);
       const hit = this.add.rectangle(0, 0, 420, 40, 0xffffff, 0.001).setInteractive();
       hit.on('pointerdown', () => {
         const i = S.frames.indexOf(S.frame);
@@ -1216,6 +1353,7 @@ export class GameScene extends Phaser.Scene {
     S.battles++;
     let coins = 0;
     if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
+    if (win) this.addPassPoints(PASS.points.win);
     if (win && S.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
     sdk.submitScore('cups', S.cups);
     track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
@@ -1260,7 +1398,7 @@ export class GameScene extends Phaser.Scene {
       const y = H / 2 - 330 + i * 66;
       const isMe = r.name === me;
       const medal = r.rank <= 3 ? ['🥇', '🥈', '🥉'][r.rank - 1] : ` ${r.rank}.`;
-      const fr = isMe ? this.frameLeague() : null; // рамка профиля видна в общем списке
+      const fr = isMe ? this.frameOf() : null; // рамка профиля видна в общем списке
       this.addTo(p, this.add.text(W / 2 - 280, y, `${medal} ${r.name}${fr ? ` ${fr.emblem}` : ''}`, { fontFamily: FONT, fontSize: '24px', color: isMe ? '#ffe066' : '#fff', fontStyle: isMe ? '800' : '400' }).setOrigin(0, 0.5));
       this.addTo(p, this.add.text(W / 2 + 280, y, `${r.score}🏆`, { fontFamily: FONT, fontSize: '24px', color: '#c9beee' }).setOrigin(1, 0.5));
     });
