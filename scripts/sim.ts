@@ -16,7 +16,7 @@
 //   инкубатор: яйцо за каждую INCUBATOR.winEvery-ю победу и за новую лигу, вылупление
 //   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES, PASS } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES, PASS, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, simulateBoss, bossStats, bossRefTeam, BOSSES, BOSS, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
@@ -77,6 +77,11 @@ class Sim {
   eggCreatures = 0;   // сколько существ реально попало на поле из яиц
   eggCoins = 0;       // и сколько монет вместо них, когда поле было забито
   passPoints = 0;     // очки «Лабораторного журнала»
+  lifetime = 0;       // заработано за всё время — из этого считаются нейроны престижа
+  perks: Record<string, number> = { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0 };
+
+  /** Единая точка начисления монет: копит lifetime (как addCoins в игре). */
+  gain(n: number) { this.coins += n; this.lifetime += n; }
 
   get chains() { return ZONES[this.zone].chains; }
 
@@ -84,10 +89,13 @@ class Sim {
   get spawnCost() { return spawnCostOf(this.spawnBought, this.income * (60_000 / INCOME.periodMs)); }
   /** Доход поля за один тик (5 с) с учётом мутации дня. */
   get income() {
-    return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level) * (c.chain === this.mutChain ? MUTATION_MULT : 1), 0);
+    return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level) * (c.chain === this.mutChain ? MUTATION_MULT : 1), 0)
+      * this.perkIncome;
   }
+  get perkIncome() { return 1 + PERK_STEP.income * this.perks.income; }
+  get genCooldownMs() { return Math.max(GEN_MIN_COOLDOWN_MS, GEN.cooldownMs - PERK_STEP.cooldownMs * this.perks.cooldown); }
   /** Чистая ставка без мутации — именно её игра пишет в офлайн-доход. */
-  get incomeClean() { return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level), 0); }
+  get incomeClean() { return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level), 0) * this.perkIncome; }
   /** Человеческий уровень лучшего существа (1..6); 0 — поле пустое. */
   get bestLevel() { return this.board.length ? this.board.reduce((m, c) => Math.max(m, c.level), 0) + 1 : 0; }
 
@@ -96,9 +104,12 @@ class Sim {
     if (this.board.length >= this.capacity || this.coins < this.spawnCost * 1.2) return false;
     this.coins -= this.spawnCost;
     this.spawnBought++;
-    this.board.push({ chain: this.chains[Math.floor(Math.random() * this.chains.length)], level: 0 });
+    this.board.push({ chain: this.chains[Math.floor(Math.random() * this.chains.length)], level: this.spawnLevel });
     return true;
   }
+
+  /** Перк «качество пробирок»: иногда существо приходит сразу второго уровня. */
+  get spawnLevel() { return Math.random() < PERK_STEP.quality * this.perks.quality ? 1 : 0; }
 
   /**
    * Бесплатное существо по кулдауну — «двигатель» поля. Раньше это были четыре
@@ -107,7 +118,7 @@ class Sim {
    */
   private freeProgress = 0;
   collectFree(seconds: number) {
-    this.freeProgress += seconds / (GEN.cooldownMs / 1000);
+    this.freeProgress += seconds / (this.genCooldownMs / 1000);
     while (this.freeProgress >= 1) {
       this.freeProgress -= 1;
       if (this.board.length >= this.capacity) break;
@@ -116,7 +127,7 @@ class Sim {
       const ch = lonely.length && Math.random() < 0.7
         ? lonely[Math.floor(Math.random() * lonely.length)]
         : this.chains[Math.floor(Math.random() * this.chains.length)];
-      this.board.push({ chain: ch, level: 0 });
+      this.board.push({ chain: ch, level: this.spawnLevel });
     }
   }
 
@@ -132,7 +143,9 @@ class Sim {
       }
     if (bi < 0) return false;
     this.board.splice(bj, 1);
-    this.board[bi].level++;
+    // Перк «удачное слияние»: иногда уровень растёт сразу на два.
+    const jump = Math.random() < PERK_STEP.lucky * this.perks.lucky ? 2 : 1;
+    this.board[bi].level = Math.min(MAX_LEVEL, this.board[bi].level + jump);
     this.merges++;
     this.passPoints += PASS.points.merge;
     return true;
@@ -153,7 +166,7 @@ class Sim {
     });
     if (idx < 0) return false;
     const [sold] = this.board.splice(idx, 1);
-    this.coins += sellPrice(sold.chain, sold.level);
+    this.gain(sellPrice(sold.chain, sold.level));
     this.sold++;
     return true;
   }
@@ -178,7 +191,7 @@ class Sim {
       const en = makeEnemy();
       const power = teamPower(en.team, false) * en.factor;
       const win = simulateBattle(S.team, en.team, 1, en.factor);
-      if (win) { this.coins += 150 + Math.floor(power / 5); this.wins++; this.passPoints += PASS.points.win; }
+      if (win) { this.gain(150 + Math.floor(power / 5)); this.wins++; this.passPoints += PASS.points.win; }
       if (win && this.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
       const leagueBefore = leagueOf(this.cups);
       this.cups = Math.max(0, this.cups + cupsDelta(win, power));
@@ -187,7 +200,7 @@ class Sim {
       ARENA_MILESTONES.forEach((m, idx) => {
         if (this.claimed[idx] || this.cups < m.cups) return;
         this.claimed[idx] = true;
-        this.coins += m.coins ?? 0;
+        this.gain(m.coins ?? 0);
         if (m.chest && this.board.length < this.capacity) {
           const r = Math.random(); // уровни как в rollChest (src/shop.ts)
           this.board.push({
@@ -223,7 +236,7 @@ class Sim {
         this.board.push({ chain: this.chains[Math.floor(Math.random() * this.chains.length)], level: cfg.level });
         this.eggCreatures++;
       } else {
-        this.coins += 200 * (cfg.level + 1);
+        this.gain(200 * (cfg.level + 1));
         this.eggCoins += 200 * (cfg.level + 1);
       }
       const next = this.eggQueue.shift();
@@ -235,14 +248,14 @@ class Sim {
     // Игрок тапает самое доходное существо: gain = ceil(income/2) × комбо.
     if (!this.board.length) return;
     const best = this.board.reduce((a, b) => (incomeOf(a.chain, a.level) > incomeOf(b.chain, b.level) ? a : b));
-    const per = Math.ceil(incomeOf(best.chain, best.level) / 2) * AVG_COMBO;
-    this.coins += Math.round(per * TAPS_PER_MIN);
+    const per = Math.ceil(incomeOf(best.chain, best.level) / 2) * (AVG_COMBO + PERK_STEP.comboMax * this.perks.combo);
+    this.gain(Math.round(per * TAPS_PER_MIN));
     this.taps += TAPS_PER_MIN;
   }
 
   activeMinute() {
     this.tickClock(1);
-    this.coins += this.income * (60_000 / INCOME.periodMs);
+    this.gain(this.income * (60_000 / INCOME.periodMs));
     this.tapMinute();
     this.collectFree(60);
     // Бюджет действий: сначала слияния (прогресс), потом покупки, потом продажа
@@ -290,8 +303,8 @@ class Sim {
   offline(hours: number) {
     // Считаем по бесплатному уровню: баланс проверяем на неплатящем игроке.
     const tier = INCOME.offlineFree;
-    const capped = Math.min(hours, tier.hours);
-    this.coins += Math.floor(this.incomeClean * tier.rate * (capped * 3_600_000 / INCOME.periodMs));
+    const capped = Math.min(hours, tier.hours + PERK_STEP.offlineHours * this.perks.offline);
+    this.gain(Math.floor(this.incomeClean * tier.rate * (capped * 3_600_000 / INCOME.periodMs)));
     this.tickClock(hours * 60); // яйца ждать не перестают
 
   }
@@ -369,6 +382,62 @@ console.log(`  • инкубатор: ${sim.eggsHatched} яиц за ${DAYS} д
   `${fmt(sim.eggCoins)}🪙 компенсации (поле было забито)`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +
   `${last.tapShare > 5 ? '— ПЛОХО: тапы обесценивают пассивный доход и офлайн' : '— OK'}`);
+
+// ---------- ПРЕСТИЖ ----------
+// Смысл престижа: следующий заход должен быть ЗАМЕТНО быстрее, иначе переезд —
+// просто обнуление. Мерим, за сколько дней игрок доходит до насыщенной Космо-Базы
+// на первом, втором и третьем заходе (перки покупаются на заработанные нейроны).
+console.log('\n=== ПРЕСТИЖ: сколько занимает следующий заход ===');
+{
+  /** Один заход: играем до насыщения последней локации, возвращаем дни и заработок. */
+  const run = (perks: Record<string, number>, maxDays: number) => {
+    const sim = new Sim();
+    sim.perks = { ...perks };
+    sim.board.push({ chain: 0, level: 0 }, { chain: 0, level: 0 });
+    for (let day = 1; day <= maxDays; day++) {
+      sim.mutChain = mutationChain(new Date(Date.UTC(2026, 6, day)).toISOString().slice(0, 10));
+      for (let ses = 0; ses < SESSIONS_PER_DAY; ses++) {
+        for (let m = 0; m < MINUTES_PER_SESSION; m++) sim.activeMinute();
+        sim.fightBattles(BATTLES_PER_SESSION);
+        sim.maybeNextZone(day);
+        sim.offline(ses < SESSIONS_PER_DAY - 1 ? 4 : 12);
+      }
+      if (sim.zone === ZONES.length - 1 && sim.saturated) return { day, lifetime: sim.lifetime };
+    }
+    return { day: maxDays, lifetime: sim.lifetime };
+  };
+
+  /** Нейроны тратятся жадно на самый дешёвый доступный перк; доход — в приоритете. */
+  const buyPerks = (perks: Record<string, number>, neurons: number) => {
+    // Сначала то, что реально ускоряет заход: поставка существ и слияния.
+    const order = ['cooldown', 'quality', 'lucky', 'income', 'offline', 'combo'];
+    let left = neurons;
+    for (let guard = 0; guard < 100 && left > 0; guard++) {
+      const key = order.find(k => {
+        const def = PERKS.find(p => p.key === k)!;
+        return perks[k] < def.max && perkCost(perks[k]) <= left;
+      });
+      if (!key) break;
+      left -= perkCost(perks[key]);
+      perks[key]++;
+    }
+    return left;
+  };
+
+  const perks: Record<string, number> = { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0 };
+  let neurons = 0;
+  let firstDays = 0;
+  for (let pass = 1; pass <= 4; pass++) {
+    const r = run(perks, 60);
+    if (pass === 1) firstDays = r.day;
+    const got = PRESTIGE.neurons(r.lifetime);
+    neurons = buyPerks(perks, neurons + got);
+    console.log(`  заход ${pass}: Космо-База насыщена на ${r.day}-й день ` +
+      `(${Math.round((100 * r.day) / firstDays)}% от первого) · заработано ${fmt(r.lifetime)}🪙 → ` +
+      `+${got} нейронов · перки ${PERKS.map(p => `${p.key} ${perks[p.key]}`).join(', ')}`);
+  }
+  console.log('  пол скорости — не экономика, а руки игрока: ACTIONS_PER_MIN действий в минуту,\n  поэтому заходы упираются в ~7 дней и дальше перки дают не скорость, а удобство');
+}
 
 // ---------- СЕЗОН АРЕНЫ ----------
 // Мягкий сброс ×SEASON.reset должен давать «сезонный забег» на пару вечеров, а не

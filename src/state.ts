@@ -58,6 +58,11 @@ export const S = {
   tour: { weekend: '', wins: 0, claimed: [] as boolean[] },
   skins: [] as string[],    // купленные и заработанные скины поля
   skin: 'default',
+  // престиж «Новая лаборатория»
+  lifetimeCoins: 0,         // заработано за всё время — из этого считаются нейроны
+  prestige: 0,              // сколько раз переезжал
+  neurons: 0,
+  perks: { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0 } as Record<string, number>,
   // «Лабораторный журнал»: сезонный трек. premium — id сезона, за который куплен.
   pass: { season: '', points: 0, claimed: [] as boolean[], premium: '' },
   frame: '',                // надетая рамка
@@ -122,6 +127,8 @@ function ensureShapes() {
   S.bossBeaten ??= [];
   S.tour ??= { weekend: '', wins: 0, claimed: [] };
   S.skins ??= [];
+  S.perks = { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0, ...(S.perks ?? {}) };
+  S.lifetimeCoins = Math.max(S.lifetimeCoins ?? 0, S.coins);
   S.skin ||= 'default';
   S.season ??= { id: '', peak: 0 };
   S.pass ??= { season: '', points: 0, claimed: [], premium: '' };
@@ -188,6 +195,16 @@ export function resetProgress() {
   });
   ensureShapes();
   persist(true);
+}
+
+/**
+ * Начисление монет. ВСЁ, что приходит игроку, идёт через эту функцию: она копит
+ * lifetimeCoins, из которого считаются нейроны престижа. Прямое `S.coins +=`
+ * ломает счётчик — так не делай.
+ */
+export function addCoins(n: number) {
+  S.coins += n;
+  S.lifetimeCoins += n;
 }
 
 export function persist(force = false) {

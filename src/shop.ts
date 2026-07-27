@@ -1,7 +1,7 @@
 // Магазин: витрина Яндекс.Платежей + синки кристаллов. Дизайн и психология — PLAN.md §16.
 import Phaser from 'phaser';
 import { W, H, PRICES, INCOME, SECRET_CHANCE } from './config';
-import { S, persist } from './state';
+import { S, persist, addCoins } from './state';
 import * as sdk from './sdk';
 import { button, panel, toast } from './ui';
 import { track } from './analytics';
@@ -22,7 +22,7 @@ interface Product { id: string; consumable: boolean; once?: () => boolean; grant
 const PRODUCTS: Product[] = [
   {
     id: 'starter', consumable: false, once: () => S.starterBought,
-    grant: () => { S.starterBought = true; S.gems += 150; S.coins += 5000; S.adFreeUntil = Date.now() + 7 * 86_400_000; },
+    grant: () => { S.starterBought = true; S.gems += 150; addCoins(5000); S.adFreeUntil = Date.now() + 7 * 86_400_000; },
   },
   { id: 'gems_s', consumable: true, grant: () => { S.gems += 80; } },
   { id: 'gems_m', consumable: true, grant: () => { S.gems += 500; } },
@@ -44,7 +44,7 @@ export function rollChest(api: ShopApi, s: Phaser.Scene, x: number, y: number) {
   }
   const level = r < 0.2 ? 4 : r < 0.55 ? 3 : 2;
   if (api.spawnReward(level)) { tada(); toast(s, x, y, t('chest.new')); }
-  else { S.coins += 200 * level; coinSound(); toast(s, x, y, t('chest.full', { n: 200 * level })); }
+  else { addCoins(200 * level); coinSound(); toast(s, x, y, t('chest.full', { n: 200 * level })); }
   api.refreshHud(); persist();
 }
 

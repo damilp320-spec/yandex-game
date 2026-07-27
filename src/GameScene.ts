@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
 import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, REMATCH_BUFF, EnemyTeam, BOSSES, BossDef, bossStats } from './arena';
 import { startBattle } from './battle';
 import { track } from './analytics';
-import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek, resetProgress } from './state';
+import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek, resetProgress, addCoins } from './state';
 import * as sdk from './sdk';
 import * as ui from './ui';
 import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene, setMuted, isMuted } from './audio';
@@ -97,7 +97,7 @@ export class GameScene extends Phaser.Scene {
     if ((!hadSave || !S.itemsZ[0]?.length) && S.zone === 0) this.startFtue();
     else (S.itemsZ[S.zone] ?? []).forEach(([r, c, ch, lv]) => {
       // Существа закончившегося события конвертируются в монеты — ничего не пропадает.
-      if (ch >= CHAINS.length && !this.evCfg) { S.coins += 100 * (lv + 1); return; }
+      if (ch >= CHAINS.length && !this.evCfg) { addCoins(100 * (lv + 1)); return; }
       this.spawnItem(ch, lv, r, c, true);
     });
     this.refreshHud(); // доход считаем сразу, а не через 5 с (первый тик) — иначе видно «+0»
@@ -129,9 +129,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- пассивный доход и кликер ----------
-  /** Доход одного существа с учётом мутации дня. */
+  /** Множитель дохода от перка престижа — постоянный, поэтому входит и в офлайн. */
+  private perkIncome() { return 1 + PERK_STEP.income * S.perks.income; }
+
+  /** Доход одного существа с учётом мутации дня и перков. */
   private itemIncome(chain: number, level: number): number {
-    return incomeOf(chain, level) * (chain === this.mutChain ? MUTATION_MULT : 1);
+    return Math.ceil(incomeOf(chain, level) * (chain === this.mutChain ? MUTATION_MULT : 1) * this.perkIncome());
   }
 
   /**
@@ -142,7 +145,9 @@ export class GameScene extends Phaser.Scene {
     let sum = 0;
     for (let r = 0; r < GRID.rows; r++) for (let c = 0; c < GRID.cols; c++) {
       const it = this.grid[r][c];
-      if (it) sum += mutated ? this.itemIncome(it.chain, it.level) : incomeOf(it.chain, it.level);
+      if (it) sum += mutated
+        ? this.itemIncome(it.chain, it.level)
+        : Math.ceil(incomeOf(it.chain, it.level) * this.perkIncome());
     }
     return sum;
   }
@@ -151,17 +156,18 @@ export class GameScene extends Phaser.Scene {
     const inc = this.totalIncome();
     if (!inc) return;
     const mult = Date.now() < S.boostUntil ? S.boostMult : 1;
-    S.coins += inc * mult;
+    addCoins(inc * mult);
     this.refreshHud();
     this.tweens.add({ targets: this.incomeText, scale: { from: 1.25, to: 1 }, duration: 250 });
   }
 
   private tapCreature(item: Item) {
     const now = Date.now();
-    this.comboCount = now - this.comboLast < 1200 ? Math.min(5, this.comboCount + 1) : 1;
+    const comboMax = 5 + PERK_STEP.comboMax * S.perks.combo;
+    this.comboCount = now - this.comboLast < 1200 ? Math.min(comboMax, this.comboCount + 1) : 1;
     this.comboLast = now;
     const gain = Math.ceil(this.itemIncome(item.chain, item.level) / 2) * this.comboCount;
-    S.coins += gain;
+    addCoins(gain);
     S.quests.progress.taps++; S.stats.taps++;
     clickSound(this.comboCount);
     this.tweens.add({ targets: item.obj, scale: { from: 0.85, to: 1 }, duration: 120 });
@@ -181,7 +187,7 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: img, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 300 });
     img.on('pointerdown', () => {
       const reward = Math.max(GOLDEN.minReward, this.totalIncome() * Math.round(GOLDEN.rewardSec * 1000 / INCOME.periodMs));
-      S.coins += reward;
+      addCoins(reward);
       jingleFanfare(); buzz(BUZZ.golden);
       S.stats.golden++;
       this.addPassPoints(PASS.points.golden);
@@ -327,7 +333,7 @@ export class GameScene extends Phaser.Scene {
     S.discovered[chain][level] = true;
     if (silent) return;
     const coins = 25 * (level + 1), gems = level >= 4 ? 5 : 0;
-    S.coins += coins; S.gems += gems;
+    addCoins(coins); S.gems += gems;
     jingleDiscovery();
     ui.toast(this, W / 2, GRID.y + 80, t('pedia.discovered', { name: this.cname(chain, level), coins, gems: gems ? ` +${gems}💎` : '' }));
     this.refreshHud();
@@ -409,7 +415,9 @@ export class GameScene extends Phaser.Scene {
     this.grid[fromA[0]][fromA[1]] = null;
     this.grid[at[0]][at[1]] = null;
     a.obj.destroy(); b.obj.destroy();
-    const level = a.level + 1;
+    // Перк «удачное слияние»: иногда уровень растёт сразу на два.
+    const jump = Math.random() < PERK_STEP.lucky * S.perks.lucky ? 2 : 1;
+    const level = Math.min(this.chainCfg(a.chain).names.length - 1, a.level + jump);
     this.spawnItem(a.chain, level, ...at);
     jingleMerge(level, a.chain);
     S.quests.progress.merges++; S.stats.merges++;
@@ -440,7 +448,9 @@ export class GameScene extends Phaser.Scene {
    * можно купить за монеты, а как выйдет — взять бесплатно. Кнопка живёт в зоне
    * большого пальца, и у игрока всегда один понятный способ добыть существо.
    */
-  private freeLeft() { return GEN.cooldownMs - (Date.now() - S.freeLast); }
+  /** Кулдаун бесплатного существа с перком «быстрые пробирки» (пол — 15 с). */
+  private genCooldown() { return Math.max(GEN_MIN_COOLDOWN_MS, GEN.cooldownMs - PERK_STEP.cooldownMs * S.perks.cooldown); }
+  private freeLeft() { return this.genCooldown() - (Date.now() - S.freeLast); }
 
   private tickSpawnButton() {
     const left = this.freeLeft();
@@ -458,7 +468,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     g.fillStyle(0x000000, 0.35); g.fillRoundedRect(-124, 20, 248, 6, 3);
-    g.fillStyle(0xffb84d, 1); g.fillRoundedRect(-124, 20, 248 * (1 - left / GEN.cooldownMs), 6, 3);
+    g.fillStyle(0xffb84d, 1); g.fillRoundedRect(-124, 20, 248 * (1 - left / this.genCooldown()), 6, 3);
   }
 
   /**
@@ -714,7 +724,9 @@ export class GameScene extends Phaser.Scene {
       S.coins -= cost;
       S.spawnBought++; // цена растёт только от покупок за монеты
     }
-    this.spawnItem(this.smartChain(), 0, ...cell);
+    // Перк «качество пробирок»: иногда существо приходит сразу второго уровня.
+    const lv = Math.random() < PERK_STEP.quality * S.perks.quality ? 1 : 0;
+    this.spawnItem(this.smartChain(), lv, ...cell);
     S.quests.progress.spawns++; S.stats.spawns++;
     if (free) coinSound();
     this.tickSpawnButton();
@@ -788,7 +800,7 @@ export class GameScene extends Phaser.Scene {
       }, 24));
 
     const sell = () => {
-      S.coins += price;
+      addCoins(price);
       S.sold++;
       this.removeItem(item);
       coinSound(); track('creature_sold', { level: item.level });
@@ -828,7 +840,7 @@ export class GameScene extends Phaser.Scene {
     });
     const claim = (day: number) => {
       const rw = STREAK_REWARDS[day - 1];
-      S.coins += rw.coins ?? 0; S.gems += rw.gems ?? 0;
+      addCoins(rw.coins ?? 0); S.gems += rw.gems ?? 0;
       if (rw.chest) this.spawnReward(4);
       S.streakDay = day; S.streakLast = today();
       tada(); buzz(BUZZ.claim); track('daily_claim', { day });
@@ -866,7 +878,7 @@ export class GameScene extends Phaser.Scene {
         this.addTo(p, this.add.text(W / 2 + 210, y + 20, '✅', { fontSize: '40px' }).setOrigin(0.5));
       else if (prog >= q.target)
         this.addTo(p, ui.button(this, W / 2 + 210, y + 24, 170, 60, t('common.claim'), 0x2e7d5b, () => {
-          S.quests.claimed[i] = true; S.coins += q.coins; S.gems += q.gems;
+          S.quests.claimed[i] = true; addCoins(q.coins); S.gems += q.gems;
           this.addPassPoints(PASS.points.quest);
           coinSound(); buzz(BUZZ.claim); this.refreshHud(); persist(); p.destroy(); this.questsPanel();
         }));
@@ -923,7 +935,7 @@ export class GameScene extends Phaser.Scene {
     S.pass.claimed[i] = true;
     if (rw.coinsMin) {
       const perMin = this.totalIncome() * (60_000 / INCOME.periodMs);
-      S.coins += Math.max(200, Math.round(perMin * rw.coinsMin)) * mult;
+      addCoins(Math.max(200, Math.round(perMin * rw.coinsMin)) * mult);
     }
     if (rw.gems) S.gems += rw.gems * mult;
     if (rw.egg) { this.giveEgg(rw.egg); if (prem) this.giveEgg(rw.egg); }
@@ -1005,6 +1017,12 @@ export class GameScene extends Phaser.Scene {
   // ---------- локации ----------
   private zonesPanel() {
     const p = ui.panel(this, t('zones.title'));
+    // Престиж живёт на карте: «переезд в новую лабораторию» — это про локации.
+    // Кнопка видна и до открытия, чтобы игрок знал, что игра глубже, чем кажется.
+    if (S.prestige > 0 || S.neurons > 0 || S.zoneUnlocked.every(Boolean))
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 330, 520, 62,
+        `${t('pres.btn')}${S.neurons ? ` · ${S.neurons} 🧠` : ''}`, 0x9d5a2e,
+        () => { p.destroy(); this.prestigePanel(); }, 21));
     ZONES.forEach((z, i) => {
       const y = H / 2 - 250 + i * 170;
       const label = `${t(`zone.${z.id}`)}\n${t('zones.chains', { n: z.chains.length })}`;
@@ -1034,6 +1052,114 @@ export class GameScene extends Phaser.Scene {
     this.scene.restart();
   }
 
+  // ---------- престиж «Новая лаборатория» ----------
+  /**
+   * Переезд открывается, когда игроку в текущем витке больше нечего хотеть: все
+   * локации открыты, а последняя заполнена существами высшего уровня. Критерий тот
+   * же, что в симуляции («насыщение» ≥60% клеток максимальным уровнем), поэтому
+   * прогнозы прогонов совпадают с игрой.
+   */
+  private prestigeReady(): boolean {
+    if (!S.zoneUnlocked.every(Boolean)) return false;
+    const last = ZONES.length - 1;
+    const cells = S.itemsZ[last] ?? [];
+    const maxLv = CHAINS[0].names.length - 1;
+    const cap = GRID.cols * (S.rowUnlocked ? GRID.rows : GRID.rows - 1);
+    return cells.filter(([, , , lv]) => lv >= maxLv).length >= Math.floor(cap * 0.6);
+  }
+
+  private perkValue(key: string, level: number): number {
+    if (key === 'cooldown') return (PERK_STEP.cooldownMs * level) / 1000;
+    if (key === 'quality') return Math.round(PERK_STEP.quality * level * 100);
+    if (key === 'lucky') return Math.round(PERK_STEP.lucky * level * 100);
+    if (key === 'income') return Math.round(PERK_STEP.income * level * 100);
+    if (key === 'offline') return PERK_STEP.offlineHours * level * 60;
+    return 5 + PERK_STEP.comboMax * level;
+  }
+
+  private prestigePanel() {
+    this.persistBoard(); // критерий считается по сохранённому полю
+    const p = ui.panel(this, t('pres.title'));
+    const ready = this.prestigeReady();
+    const gain = PRESTIGE.neurons(S.lifetimeCoins);
+    this.addTo(p, this.add.text(W / 2 - 300, H / 2 - 366, t('pres.neurons', { n: S.neurons }),
+      { fontFamily: FONT, fontSize: '26px', color: '#c9a6ff', fontStyle: '800' }).setOrigin(0, 0.5));
+    this.addTo(p, this.add.text(W / 2 + 300, H / 2 - 366, t('pres.count', { n: S.prestige }),
+      { fontFamily: FONT, fontSize: '20px', color: '#8f86b8' }).setOrigin(1, 0.5));
+
+    PERKS.forEach((def, i) => {
+      const lvl = S.perks[def.key] ?? 0;
+      const y = H / 2 - 312 + i * 82;
+      const maxed = lvl >= def.max;
+      const cost = perkCost(lvl);
+      this.addTo(p, ui.card(this, W / 2, y, 616, 74, maxed ? 0x2f4d3a : 0x322558, 14));
+      this.addTo(p, this.add.text(W / 2 - 288, y - 15, `${t(`perk.${def.key}`)}  ${lvl}/${def.max}`,
+        { fontFamily: FONT, fontSize: '21px', color: '#fff', fontStyle: '700' }).setOrigin(0, 0.5));
+      // Показываем эффект СЛЕДУЮЩЕГО уровня — иначе непонятно, за что платишь.
+      this.addTo(p, this.add.text(W / 2 - 288, y + 16,
+        t(`perk.${def.key}Desc`, { n: this.perkValue(def.key, maxed ? lvl : lvl + 1) }),
+        { fontFamily: FONT, fontSize: '17px', color: '#c9beee', wordWrap: { width: 420 } }).setOrigin(0, 0.5));
+      if (maxed) {
+        this.addTo(p, this.add.text(W / 2 + 250, y, t('perk.max'),
+          { fontFamily: FONT, fontSize: '18px', color: '#7fdc8f', fontStyle: '700' }).setOrigin(0.5));
+      } else {
+        this.addTo(p, ui.button(this, W / 2 + 250, y, 116, 54, t('perk.buy', { n: cost }),
+          S.neurons >= cost ? 0x8f5ad0 : 0x3a3a55, () => {
+            if (S.neurons < cost) { failSound(); return; }
+            S.neurons -= cost; S.perks[def.key] = lvl + 1;
+            tada(); buzz(BUZZ.claim); track('perk_buy', { perk: def.key, level: lvl + 1 });
+            this.refreshHud(); persist(true); p.destroy(); this.prestigePanel();
+          }, 19));
+      }
+    });
+
+    if (ready) {
+      this.addTo(p, this.add.text(W / 2, H / 2 + 250, t('pres.gain', { n: gain }),
+        { fontFamily: FONT, fontSize: '24px', color: '#ffe066', fontStyle: '700' }).setOrigin(0.5));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 320, 520, 76, t('pres.move', { n: gain }), 0x9d5a2e,
+        () => { p.destroy(); this.prestigeConfirm(gain); }, 25));
+    } else {
+      this.addTo(p, this.add.text(W / 2, H / 2 + 290, t('pres.locked'),
+        { fontFamily: FONT, fontSize: '21px', color: '#8f86b8', align: 'center', lineSpacing: 6 }).setOrigin(0.5));
+    }
+  }
+
+  /** Полный список «что сохранится / что обнулится» до переезда: доверие дороже мелкого шрифта. */
+  private prestigeConfirm(gain: number) {
+    const p = ui.panel(this, t('pres.askTitle'), () => this.prestigePanel());
+    this.addTo(p, ui.card(this, W / 2, H / 2 - 210, 616, 300, 0x2f4d3a));
+    this.addTo(p, this.add.text(W / 2 - 280, H / 2 - 210, t('pres.keep'),
+      { fontFamily: FONT, fontSize: '20px', color: '#fff', lineSpacing: 7 }).setOrigin(0, 0.5));
+    this.addTo(p, ui.card(this, W / 2, H / 2 + 60, 616, 170, 0x5a2f3a));
+    this.addTo(p, this.add.text(W / 2 - 280, H / 2 + 60, t('pres.lose'),
+      { fontFamily: FONT, fontSize: '20px', color: '#fff', lineSpacing: 7 }).setOrigin(0, 0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 250, 520, 80, t('pres.yes'), 0x9d2e4d, () => {
+      p.destroy(); this.doPrestige(gain);
+    }, 26));
+  }
+
+  private doPrestige(gain: number) {
+    S.neurons += gain;
+    S.prestige++;
+    track('prestige', { count: S.prestige, neurons: gain });
+    // Обнуляем ровно то, что обещали в списке: поля, локации, монеты и цену существ.
+    S.coins = 0;
+    S.lifetimeCoins = 0;   // нейроны следующего переезда считаются за новый виток
+    S.itemsZ = ZONES.map(() => []);
+    S.itemsZ[0] = [[2, 2, 0, 0], [2, 3, 0, 0]]; // пара существ, чтобы поле не встретило пустотой
+    S.zone = 0;
+    S.zoneUnlocked = ZONES.map((_, i) => i === 0);
+    S.rowUnlocked = false;
+    S.spawnBought = 0;
+    S.incomeRate = 0;
+    S.boostUntil = 0; S.boostMult = 1;
+    S.freeLast = 0;
+    jingleFanfare(); buzz(BUZZ.win);
+    persist(true);
+    ui.toast(this, W / 2, H / 2, t('pres.done', { n: gain }));
+    this.time.delayedCall(600, () => this.scene.restart());
+  }
+
   // ---------- сезонное событие ----------
   private eventPanel() {
     const ev = this.ev!;
@@ -1049,7 +1175,7 @@ export class GameScene extends Phaser.Scene {
         this.addTo(p, this.add.text(W / 2 + 210, y + 24, '✅', { fontSize: '38px' }).setOrigin(0.5));
       else if (S.event.points >= m.points)
         this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, t('common.claim'), 0x2e7d5b, () => {
-          S.event.claimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
+          S.event.claimed[i] = true; addCoins(m.coins ?? 0); S.gems += m.gems ?? 0;
           if (m.chest) this.spawnReward(4);
           if (m.egg) this.giveEgg(m.egg);
           jingleFanfare(); track('event_milestone', { points: m.points });
@@ -1232,7 +1358,7 @@ export class GameScene extends Phaser.Scene {
       else if (reached)
         this.addTo(p, ui.button(this, W / 2 + 240, y, 130, 56, t('common.claim'), 0x2e7d5b, () => {
           S.tour.claimed[i] = true;
-          if (tr.coinsMin) S.coins += Math.max(200, Math.round(this.totalIncome() * (60_000 / INCOME.periodMs) * tr.coinsMin));
+          if (tr.coinsMin) addCoins(Math.max(200, Math.round(this.totalIncome() * (60_000 / INCOME.periodMs) * tr.coinsMin)));
           if (tr.gems) S.gems += tr.gems;
           if (tr.egg) this.giveEgg(tr.egg);
           if (tr.chest) rollChest(this.api, this, W / 2, H / 2 + 200);
@@ -1435,7 +1561,7 @@ export class GameScene extends Phaser.Scene {
         { fontFamily: FONT, fontSize: '20px', color: reached ? '#fff' : '#6b6490', fontStyle: reached ? '600' : '400' }).setOrigin(0, 0.5));
       if (reached)
         this.addTo(p, ui.button(this, W / 2 + 210, y, 150, 40, t('common.claim'), 0x2e7d5b, () => {
-          S.arenaClaimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
+          S.arenaClaimed[i] = true; addCoins(m.coins ?? 0); S.gems += m.gems ?? 0;
           tada(); track('arena_milestone', { cups: m.cups });
           if (m.chest) rollChest(this.api, this, W / 2, H / 2 + 200);
           this.refreshHud(); persist(true); p.destroy(); this.arenaPanel();
@@ -1536,7 +1662,7 @@ export class GameScene extends Phaser.Scene {
     S.season.peak = Math.max(S.season.peak, leagueIndex(S.cups));
     S.battles++;
     let coins = 0;
-    if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
+    if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); addCoins(coins); }
     if (win) this.addPassPoints(PASS.points.win);
     if (win) this.tourWin();
     if (win && S.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
@@ -1685,7 +1811,7 @@ export class GameScene extends Phaser.Scene {
       { fontSize: '30px', color: '#fff', align: 'center' }).setOrigin(0.5));
     this.addTo(p, ui.button(this, W / 2, H / 2 + 120, 420, 76, t('starter.btn'), 0x2e7d5b, async () => {
       if (await sdk.purchase('starter', false)) {
-        S.starterBought = true; S.gems += 150; S.coins += 5000; S.adFreeUntil = Date.now() + 7 * 86_400_000;
+        S.starterBought = true; S.gems += 150; addCoins(5000); S.adFreeUntil = Date.now() + 7 * 86_400_000;
         tada(); this.refreshHud(); persist(true);
       }
       p.destroy();
@@ -1749,7 +1875,7 @@ export class GameScene extends Phaser.Scene {
       ui.toast(this, W / 2, GRID.y + 80, secret ? t('chest.secret') : t('egg.hatched', { name: this.cname(born.chain, born.level) }));
     } else {
       const coins = 200 * (cfg.level + 1);
-      S.coins += coins;
+      addCoins(coins);
       ui.toast(this, W / 2, GRID.y + 80, t('egg.hatchedFull', { n: coins }));
     }
     if (cfg.gems) ui.toast(this, W / 2, GRID.y + 150, t('egg.gems', { n: cfg.gems }), '#c9a6ff');
@@ -1889,7 +2015,11 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- офлайн-доход ----------
   /** Уровень офлайна: бесплатный (50% за 2 ч) или купленный «склад» (100% за 5 ч). */
-  private offlineTier() { return S.offlineVip ? INCOME.offlinePaid : INCOME.offlineFree; }
+  private offlineTier() {
+    const base = S.offlineVip ? INCOME.offlinePaid : INCOME.offlineFree;
+    // Перк «склад» добавляет часы поверх любого уровня, в том числе бесплатного.
+    return { rate: base.rate, hours: base.hours + PERK_STEP.offlineHours * S.perks.offline };
+  }
 
   private offlinePopup() {
     const tier = this.offlineTier();
@@ -1902,7 +2032,7 @@ export class GameScene extends Phaser.Scene {
     this.addTo(p, this.add.text(W / 2, H / 2 - 130,
       t('offline.tier', { hours: tier.hours, percent: Math.round(tier.rate * 100) }),
       { fontFamily: FONT, fontSize: '21px', color: '#c9beee', align: 'center' }).setOrigin(0.5));
-    const claim = (mult: number) => { S.coins += earned * mult; coinSound(); this.refreshHud(); persist(); p.destroy(); };
+    const claim = (mult: number) => { addCoins(earned * mult); coinSound(); this.refreshHud(); persist(); p.destroy(); };
     this.addTo(p, ui.button(this, W / 2, H / 2 - 30, 420, 72, t('offline.claim', { n: earned }), 0x5a48a8, () => claim(1)));
     this.addTo(p, ui.button(this, W / 2, H / 2 + 70, 480, 72, t('offline.claim2', { n: earned * 2 }), 0x2e7d5b,
       () => sdk.showRewarded(() => claim(2))));
