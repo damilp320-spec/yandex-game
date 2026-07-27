@@ -12,10 +12,11 @@
 //   покупка существ пока хватает монет с запасом, жадные слияния,
 //   продажа «одиночек» когда поле почти забито (заказов больше нет),
 //   BATTLES_PER_SESSION боёв арены за сессию с ростом кубков, милстоунами и сундуками,
+//   мутация дня (одна цепочка ×2 дохода) — считается от календарной даты дня прогона,
 //   инкубатор: яйцо за каждую INCUBATOR.winEvery-ю победу и за новую лигу, вылупление
 //   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
@@ -66,6 +67,7 @@ class Sim {
   claimed: boolean[] = ARENA_MILESTONES.map(() => false);
   // Инкубатор: часы идут и в офлайне, поэтому нужен модельный «сейчас» в минутах.
   now = 0;
+  mutChain = -1;   // цепочка дня: её доход ×MUTATION_MULT (в офлайн не входит)
   egg: { type: EggType; due: number } | null = null;
   eggQueue: EggType[] = [];
   eggsHatched = 0;
@@ -76,8 +78,12 @@ class Sim {
 
   get capacity() { return GRID.cols * (this.rowUnlocked ? GRID.rows : GRID.rows - 1); }
   get spawnCost() { return spawnCostOf(this.spawnBought, this.income * (60_000 / INCOME.periodMs)); }
-  /** Доход поля за один тик (5 с). */
-  get income() { return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level), 0); }
+  /** Доход поля за один тик (5 с) с учётом мутации дня. */
+  get income() {
+    return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level) * (c.chain === this.mutChain ? MUTATION_MULT : 1), 0);
+  }
+  /** Чистая ставка без мутации — именно её игра пишет в офлайн-доход. */
+  get incomeClean() { return this.board.reduce((s, c) => s + incomeOf(c.chain, c.level), 0); }
   /** Человеческий уровень лучшего существа (1..6); 0 — поле пустое. */
   get bestLevel() { return this.board.length ? this.board.reduce((m, c) => Math.max(m, c.level), 0) + 1 : 0; }
 
@@ -280,7 +286,7 @@ class Sim {
     // Считаем по бесплатному уровню: баланс проверяем на неплатящем игроке.
     const tier = INCOME.offlineFree;
     const capped = Math.min(hours, tier.hours);
-    this.coins += Math.floor(this.income * tier.rate * (capped * 3_600_000 / INCOME.periodMs));
+    this.coins += Math.floor(this.incomeClean * tier.rate * (capped * 3_600_000 / INCOME.periodMs));
     this.tickClock(hours * 60); // яйца ждать не перестают
 
   }
@@ -298,9 +304,13 @@ const sim = new Sim();
 sim.board.push({ chain: 0, level: 0 }, { chain: 0, level: 0 });
 const daily: { day: number; income: number; cost: number; tapShare: number }[] = [];
 let legendaryDay = 0;
+let mutDays = 0; // сколько дней из DAYS мутация попала в текущую локацию игрока
 const zoneDays: string[] = []; // день, когда впервые появилось существо 6-го уровня
 for (let day = 1; day <= DAYS; day++) {
   const beforeTaps = sim.taps;
+  // Календарная дата нужна, чтобы мутация дня менялась так же, как в игре.
+  sim.mutChain = mutationChain(new Date(Date.UTC(2026, 6, day)).toISOString().slice(0, 10));
+  if (ZONES[sim.zone].chains.includes(sim.mutChain)) mutDays++;
   for (let s = 0; s < SESSIONS_PER_DAY; s++) {
     for (let m = 0; m < MINUTES_PER_SESSION; m++) sim.activeMinute();
     sim.fightBattles(BATTLES_PER_SESSION);
@@ -334,6 +344,8 @@ console.log(`  • цена существа vs доход: ${affordable ? 'OK' 
   `(цена ${fmt(last.cost)}; доход ${fmt(last.income)}/мин; на руках ${fmt(sim.coins)})`);
 console.log(`  • первая легендарка (6 ур.): ${legendaryDay ? `день ${legendaryDay}` : 'не достигнута за 14 дней'}`);
 console.log(`  • переходы по локациям: ${zoneDays.length ? zoneDays.join(', ') : 'ни одной новой за 14 дней — проверь цены разблокировки'}`);
+console.log(`  • мутация дня попадала в локацию игрока ${mutDays} из ${DAYS} дней ` +
+  `(в такие дни доход ×${MUTATION_MULT} у одной цепочки)`);
 console.log(`  • инкубатор: ${sim.eggsHatched} яиц за ${DAYS} дн. — ${sim.eggCreatures} существ на поле, ` +
   `${fmt(sim.eggCoins)}🪙 компенсации (поле было забито)`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +

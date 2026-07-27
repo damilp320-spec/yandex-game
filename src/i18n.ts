@@ -216,6 +216,11 @@ const RU: Record<string, string> = {
   'set.hapticsOff': '📴 Вибрация: выкл',
   'set.shortcut': '📌 Добавить ярлык на экран',
 
+  'mut.banner': '🧬 Сегодня мутирует {name} — доход ×{mult}!',
+  'mut.card': '🧬 Мутация дня: доход ×{mult}',
+  'streak.tomorrow': 'Завтра: {reward}',
+  'streak.comeBack': 'Возвращайся завтра за {reward}!',
+
   'egg.title': '🥚 Инкубатор',
   'egg.chipNone': '🥚 пусто',
   'egg.chipReady': '🥚 готово!',
@@ -447,6 +452,11 @@ const EN: Record<string, string> = {
   'set.hapticsOff': '📴 Vibration: off',
   'set.shortcut': '📌 Add shortcut to home screen',
 
+  'mut.banner': '🧬 {name} is mutating today — income ×{mult}!',
+  'mut.card': '🧬 Mutation of the day: income ×{mult}',
+  'streak.tomorrow': 'Tomorrow: {reward}',
+  'streak.comeBack': 'Come back tomorrow for {reward}!',
+
   'egg.title': '🥚 Incubator',
   'egg.chipNone': '🥚 empty',
   'egg.chipReady': '🥚 ready!',
@@ -675,6 +685,11 @@ const TR: Record<string, string> = {
   'set.hapticsOn': '📳 Titreşim: açık',
   'set.hapticsOff': '📴 Titreşim: kapalı',
   'set.shortcut': '📌 Ana ekrana kısayol ekle',
+
+  'mut.banner': '🧬 Bugün {name} mutasyona uğradı — gelir ×{mult}!',
+  'mut.card': '🧬 Günün mutasyonu: gelir ×{mult}',
+  'streak.tomorrow': 'Yarın: {reward}',
+  'streak.comeBack': 'Yarın {reward} için geri dön!',
 
   'egg.title': '🥚 Kuluçka',
   'egg.chipNone': '🥚 boş',

@@ -126,6 +126,18 @@ export const CHAINS: Chain[] = [
 export const incomeOf = (chain: number, level: number) =>
   Math.ceil((1 + chain * 0.35) * Math.pow(INCOME.levelMult, level) * (chain === SECRET_CHAIN ? 6.7 : 1));
 
+/**
+ * Мутация дня: одна цепочка приносит ×2 дохода. Детерминирована от даты, поэтому
+ * не занимает места в сейве и у всех игроков в один день мутирует одно и то же —
+ * это повод обсудить в чате и причина заглянуть в игру именно сегодня.
+ *
+ * Мутация НЕ учитывается в офлайн-доходе (S.incomeRate пишется по чистой ставке):
+ * иначе выгоднее было бы «ловить» мутацию сном, а не игрой.
+ */
+export const MUTATION_MULT = 2;
+export const mutationChain = (date = new Date().toISOString().slice(0, 10)) =>
+  [...date].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % CHAINS.length;
+
 // Локации: свои цепочки, свой тематический фон. Переключение — через карту.
 // Название локации — в i18n по ключу `zone.<id>`.
 export interface Zone { id: string; bg: string; chains: number[]; unlockCoins: number; unlockGems: number }

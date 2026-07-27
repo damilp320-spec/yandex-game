@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -22,6 +22,7 @@ const HOLD_MS = 350;
 export class GameScene extends Phaser.Scene {
   private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
   private static promptedThisSession = false; // оценка/ярлык/вход — не больше одного за сессию
+  private static mutShown = false; // про мутацию дня рассказываем раз за сессию
   private grid: (Item | null)[][] = [];
   private spawnBar?: Phaser.GameObjects.Graphics;
   private coinsText!: Phaser.GameObjects.Text;
@@ -29,6 +30,7 @@ export class GameScene extends Phaser.Scene {
   private incomeText!: Phaser.GameObjects.Text;
   private spawnLabel?: Phaser.GameObjects.Text;
   private eggLabel?: Phaser.GameObjects.Text;
+  private mutChain = -1; // цепочка дня: её доход ×MUTATION_MULT
   private eggBadge?: Phaser.GameObjects.Arc;
   private comboCount = 0;
   private comboLast = 0;
@@ -79,6 +81,9 @@ export class GameScene extends Phaser.Scene {
       this.evCfg = { id: this.ev.id, color: this.ev.color, names: this.ev.names };
       if (S.event.id !== this.ev.id) S.event = { id: this.ev.id, points: 0, claimed: this.ev.milestones.map(() => false) };
     }
+    // Мутация дня считается от даты — до отрисовки поля, чтобы существа сразу
+    // получили метку ×2.
+    this.mutChain = mutationChain();
     generateSprites(this, CHAINS, 0);
     if (this.evCfg) generateSprites(this, [this.evCfg], EVENT_CHAIN_INDEX);
 
@@ -102,6 +107,12 @@ export class GameScene extends Phaser.Scene {
       // Спокойный вход: если игрок уже закрыл входные окна — предлагаем ярлык.
       this.time.delayedCall(4000, () => void this.platformPrompt('session'));
     }
+    // Мутация дня: сообщаем один раз за сессию и только если цепочка доступна
+    // игроку — иначе это шум про запертую локацию.
+    if (!GameScene.mutShown && ZONES.some((z, i) => S.zoneUnlocked[i] && z.chains.includes(this.mutChain))) {
+      GameScene.mutShown = true;
+      this.tip('mut.banner', undefined, { name: this.cname(this.mutChain, 3), mult: MUTATION_MULT });
+    }
     sdk.gameplayStart();
 
     this.input.dragDistanceThreshold = 12; // короткий тап = клик по существу, не драг
@@ -113,10 +124,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- пассивный доход и кликер ----------
-  private totalIncome(): number {
+  /** Доход одного существа с учётом мутации дня. */
+  private itemIncome(chain: number, level: number): number {
+    return incomeOf(chain, level) * (chain === this.mutChain ? MUTATION_MULT : 1);
+  }
+
+  /**
+   * Доход поля за тик. `mutated = false` даёт чистую ставку — её пишем в S.incomeRate
+   * для офлайна, чтобы мутацию нельзя было «поймать» сном вместо игры.
+   */
+  private totalIncome(mutated = true): number {
     let sum = 0;
     for (let r = 0; r < GRID.rows; r++) for (let c = 0; c < GRID.cols; c++) {
-      const it = this.grid[r][c]; if (it) sum += incomeOf(it.chain, it.level);
+      const it = this.grid[r][c];
+      if (it) sum += mutated ? this.itemIncome(it.chain, it.level) : incomeOf(it.chain, it.level);
     }
     return sum;
   }
@@ -134,7 +155,7 @@ export class GameScene extends Phaser.Scene {
     const now = Date.now();
     this.comboCount = now - this.comboLast < 1200 ? Math.min(5, this.comboCount + 1) : 1;
     this.comboLast = now;
-    const gain = Math.ceil(incomeOf(item.chain, item.level) / 2) * this.comboCount;
+    const gain = Math.ceil(this.itemIncome(item.chain, item.level) / 2) * this.comboCount;
     S.coins += gain;
     S.quests.progress.taps++;
     clickSound(this.comboCount);
@@ -283,6 +304,8 @@ export class GameScene extends Phaser.Scene {
     const img = this.add.image(0, 0, textureKey(chain, level)).setDisplaySize(114, 114);
     const badge = this.add.text(42, 42, `${level + 1}`, { fontFamily: FONT, fontSize: '20px', color: RARITY[level], fontStyle: '800' }).setOrigin(0.5).setStroke('#1a1230', 4);
     box.add([img, badge]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
+    // Мутировавшая цепочка помечена прямо на поле: игрок видит, кого сегодня растить.
+    if (chain === this.mutChain) box.add(ui.chip(this, -40, -44, 52, 24, `×${MUTATION_MULT}`, '#7fdc8f', 0x14301f));
     const item: Item = { chain, level, obj: box };
     this.grid[r][c] = item;
     this.wireDrag(item);
@@ -572,10 +595,10 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- FTUE 2.0: по одной подсказке на механику, каждая один раз ----------
   /** Баннер в свободной зоне + пульс целевого элемента (стрелки не нужны — глаз ловит движение). */
-  private tip(key: string, target?: Phaser.GameObjects.GameObject) {
+  private tip(key: string, target?: Phaser.GameObjects.GameObject, params?: Record<string, string | number>) {
     this.tipBanner?.destroy();
     const b = this.add.container(W / 2, 1064).setDepth(20);
-    const label = this.add.text(0, 0, t(key), {
+    const label = this.add.text(0, 0, t(key, params), {
       fontFamily: FONT, fontSize: '22px', color: '#ffe066', fontStyle: '700',
       align: 'center', wordWrap: { width: 600 },
     }).setOrigin(0.5);
@@ -699,8 +722,11 @@ export class GameScene extends Phaser.Scene {
 
     // Доход — главная причина держать существо на поле.
     this.addTo(p, ui.card(this, W / 2, H / 2 - 110, 560, 76, 0x2e6d9d));
-    this.addTo(p, this.add.text(W / 2, H / 2 - 110, t('card.income', { n: incomeOf(item.chain, item.level) }),
+    this.addTo(p, this.add.text(W / 2, H / 2 - 118, t('card.income', { n: this.itemIncome(item.chain, item.level) }),
       { fontFamily: FONT, fontSize: '26px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+    if (item.chain === this.mutChain)
+      this.addTo(p, this.add.text(W / 2, H / 2 - 88, t('mut.card', { mult: MUTATION_MULT }),
+        { fontFamily: FONT, fontSize: '19px', color: '#7fdc8f', fontStyle: '700' }).setOrigin(0.5));
 
     // Боевые характеристики — чтобы выбирать бойцов осознанно.
     this.addTo(p, ui.card(this, W / 2, H / 2 - 10, 560, 82, 0x3a2f66));
@@ -758,7 +784,7 @@ export class GameScene extends Phaser.Scene {
       const got = i + 1 < (mode === 'lost' ? savedDay : nextDay);
       this.addTo(p, this.add.circle(x, y, 34, got ? 0x2e7d5b : i + 1 === nextDay ? 0xffe066 : 0x3a3a55).setStrokeStyle(2, 0xffffff, 0.4));
       this.addTo(p, this.add.text(x, y, `${i + 1}`, { fontSize: '24px', color: got || i + 1 === nextDay ? '#241a45' : '#fff' }).setOrigin(0.5));
-      this.addTo(p, this.add.text(x, y + 56, rw.chest ? '📦' : rw.gems ? `${rw.gems}💎` : `${rw.coins}🪙`, { fontSize: '18px', color: '#c9a6ff' }).setOrigin(0.5));
+      this.addTo(p, this.add.text(x, y + 56, rewardLabel(rw), { fontSize: '18px', color: '#c9a6ff' }).setOrigin(0.5));
     });
     const claim = (day: number) => {
       const rw = STREAK_REWARDS[day - 1];
@@ -766,10 +792,15 @@ export class GameScene extends Phaser.Scene {
       if (rw.chest) this.spawnReward(4);
       S.streakDay = day; S.streakLast = today();
       tada(); buzz(BUZZ.claim); track('daily_claim', { day });
-      this.refreshHud(); persist(true); p.destroy(); onDone();
+      this.refreshHud(); persist(true); p.destroy();
+      ui.toast(this, W / 2, H / 2 - 40, t('streak.comeBack', { reward: rewardLabel(STREAK_REWARDS[day % 7]) }), '#c9a6ff');
+      onDone();
     };
     if (mode === 'claim') {
       this.addTo(p, ui.button(this, W / 2, H / 2, 420, 76, t('streak.claimDay', { n: nextDay }), 0x2e7d5b, () => claim(nextDay)));
+      // Тизер завтрашнего дня: игрок уходит, зная, что его ждёт — классический D1.
+      this.addTo(p, this.add.text(W / 2, H / 2 + 96, t('streak.tomorrow', { reward: rewardLabel(STREAK_REWARDS[nextDay % 7]) }),
+        { fontFamily: FONT, fontSize: '24px', color: '#c9a6ff', fontStyle: '700' }).setOrigin(0.5));
     } else {
       // Мягкий loss aversion: серию можно спасти рекламой — без реальной потери (PLAN.md §15).
       this.addTo(p, this.add.text(W / 2, H / 2 - 120, t('streak.lost', { n: S.streakDay }), { fontSize: '30px', color: '#ff9d70' }).setOrigin(0.5));
@@ -1409,7 +1440,12 @@ export class GameScene extends Phaser.Scene {
       const it = this.grid[r][c]; if (it) items.push([r, c, it.chain, it.level]);
     }
     S.itemsZ[S.zone] = items;
-    S.incomeRate = this.totalIncome(); // для офлайн-начисления
+    S.incomeRate = this.totalIncome(false); // для офлайна — чистая ставка, без мутации дня
     persist(force);
   }
+}
+
+/** Короткая подпись награды дня: сундук, кристаллы или монеты. */
+function rewardLabel(rw: { coins?: number; gems?: number; chest?: boolean }): string {
+  return rw.chest ? '📦' : rw.gems ? `${rw.gems}💎` : `${rw.coins}🪙`;
 }
