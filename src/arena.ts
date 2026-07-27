@@ -169,6 +169,98 @@ export const ARENA_MILESTONES: { cups: number; coins?: number; gems?: number; ch
 export interface EnemyTeam { name: string; cups: number; team: number[][]; factor: number }
 
 /**
+ * Боссы лиг: пятеро твоих против одного гиганта. Гиммик каждого выражен ТОЛЬКО
+ * существующими характеристиками (толще / чаще бьёт / стеклянная пушка) — новых
+ * правил боя нет, иначе пришлось бы поддерживать две боевые системы.
+ *
+ * Характеристики босса СТАТИЧНЫ и привязаны к лиге, а не к команде игрока: иначе
+ * «прийти сильнее и отомстить» стало бы невозможно — босс рос бы вместе с игроком.
+ * Эталон лиги — пятёрка юнитов уровня `level`; калибровка в `npm run sim`.
+ */
+export interface BossDef { chain: number; level: number; kind: 'tank' | 'fast' | 'glass'; gems: number }
+export const BOSSES: BossDef[] = [
+  { chain: 5, level: 1, kind: 'tank', gems: 20 },   // Робо-Крошка: танк
+  { chain: 2, level: 2, kind: 'fast', gems: 25 },   // Тралалино: частые укусы
+  { chain: 1, level: 3, kind: 'tank', gems: 30 },   // Авиакрокодило: броня
+  { chain: 8, level: 4, kind: 'glass', gems: 40 },  // Мега 67: стеклянная пушка
+  { chain: 9, level: 4, kind: 'tank', gems: 50 },   // Капибара Командор
+  { chain: 11, level: 5, kind: 'glass', gems: 80 }, // Спагеттиссимо Прайм
+];
+
+/**
+ * Множители босса. hp/dps подобраны свипом в sim так, чтобы эталонная команда лиги
+ * выигрывала 40–60% — то есть босс берётся со второй-третьей попытки.
+ *
+ * Гиммики сохраняют произведение hp × dps: боссы отличаются характером, а не силой.
+ * Сплэш-босс бьёт всех пятерых, поэтому ему нужен неожиданно скромный DPS.
+ */
+/**
+ * Множители босса выведены аналитически и проверены свипом в sim.
+ *
+ * Главное открытие калибровки: против ОДИНОЧНОГО босса сплэш-боец бьёт в 0.45 силы,
+ * а сам босс со сплэшем раздаёт 5 × 0.45 = 2.25 своего урона. Поэтому считать надо не
+ * номинальный DPS команды, а эффективный по одной цели — первая калибровка на
+ * номинальном давала боссам либо 0%, либо 100% побед.
+ *
+ * hpK задаёт длительность боя: время «команда убивает босса» = hpK × (HP эталона /
+ * эффективный DPS эталона) ≈ hpK × 14с.
+ *
+ * dpsK НЕ равен 1/hpK, хотя «гонка вровень» подсказывает именно это: снежный ком тут
+ * односторонний — команда теряет урон с каждым павшим бойцом, а босс не теряет ничего.
+ * При равной на бумаге гонке (dpsK = 1/hpK) игрок проигрывал 100% боёв. С линейной
+ * убылью команда успевает нанести примерно половину своего урона, поэтому боссу нужно
+ * вдвое больше времени на вайп: dpsK = 1/(2 × hpK).
+ */
+export const BOSS = {
+  hpK: 2,        // ≈28 секунд боя у эталонной команды лиги
+  dpsK: 0.25,    // 1/(2×hpK) — с поправкой на односторонний снежный ком
+  /**
+   * Тип атаки босса — не косметика, а регулятор ДИНАМИКИ. Сплэш по всем пятерым
+   * превращает бой в детерминированную гонку (команда не теряет урон, пока все живы,
+   * а потом гибнет разом — свип давал ровно 0% или 100%). Одиночная цель убивает
+   * бойцов по одному, урон команды падает постепенно, и появляется накал.
+   *
+   * Гиммики сохраняют произведение hp × dps, поэтому боссы отличаются характером
+   * (толстый и медленный / частый / стеклянная пушка), но не сложностью.
+   */
+  kinds: {
+    tank: { hp: 1.4, dps: 1.6, spd: 1.6, type: 'splash' },
+    fast: { hp: 1, dps: 1.6, spd: 0.8, type: 'melee' },
+    glass: { hp: 0.7, dps: 2.1, spd: 1.3, type: 'melee' },
+  } as Record<BossDef['kind'], { hp: number; dps: number; spd: number; type: AttackType }>,
+};
+
+/** Эталонная пятёрка лиги: пять разных цепочек одного уровня — так выглядит команда игрока. */
+export const bossRefTeam = (def: BossDef): number[][] =>
+  Array.from({ length: 5 }, (_, k) => [(def.chain + k * 3) % CHAINS.length, def.level]);
+
+/** Во сколько раз тип атаки эффективнее/слабее против ОДНОЙ цели. */
+const singleTargetFactor = (type: AttackType) =>
+  type === 'splash' ? BALANCE.splashMult : type === 'melee' ? BALANCE.meleeMult : 1;
+
+export interface BossFight { chain: number; level: number; hp: number; dmg: number; spd: number; type: AttackType }
+
+/** Характеристики босса лиги: считаются от эталонной пятёрки этого уровня. */
+export function bossStats(def: BossDef): BossFight {
+  const k = BOSS.kinds[def.kind];
+  const ref = bossRefTeam(def).map(([ch, lv]) => unitStats(ch, lv, false));
+  const refHp = ref.reduce((sum, u) => sum + u.hp, 0);
+  // Эффективный урон эталона именно ПО БОССУ (одна цель): сплэш здесь слаб.
+  const refEffDps = ref.reduce((sum, u) => sum + (u.dmg / (u.spd / 1000)) * singleTargetFactor(u.type), 0);
+  const spd = Math.round(unitStats(def.chain, def.level, false).spd * k.spd);
+  // Пропускная способность босса по КОМАНДЕ: сплэш бьёт всех пятерых.
+  const throughput = refEffDps * BOSS.dpsK * k.dps;
+  const perHit = throughput / (k.type === 'splash' ? 5 * BALANCE.splashMult : BALANCE.meleeMult);
+  return {
+    chain: def.chain, level: def.level,
+    hp: Math.round(refHp * BOSS.hpK * k.hp),
+    dmg: Math.max(1, Math.round(perHit * (spd / 1000))),
+    spd,
+    type: k.type,
+  };
+}
+
+/**
  * Противник под силу игрока: ±15%, правдоподобный ник, кубки рядом.
  *
  * Считаем от БАЗОВОЙ силы команды (без казармы), иначе прокачка поднимала и врага,
@@ -250,6 +342,29 @@ const simUnit = (chain: number, level: number, side: 0 | 1, factor: number): Sim
  */
 export function simulateBattle(playerTeam: number[][], enemyTeam: number[][], playerFactor = 1, enemyFactor = 1): boolean {
   return simulateBattleDetailed(playerTeam, enemyTeam, playerFactor, enemyFactor).win;
+}
+
+/** Бой против босса теми же правилами: один враг с явными характеристиками. */
+export function simulateBoss(playerTeam: number[][], boss: BossFight, playerFactor = 1): boolean {
+  const units: SimUnit[] = [
+    ...playerTeam.map(([ch, lv]) => simUnit(ch, lv, 0, playerFactor)),
+    { side: 1, alive: true, type: boss.type, spd: boss.spd, hp: boss.hp, dmg: boss.dmg, next: boss.spd },
+  ];
+  for (let time = 0; time < 180_000; time += TICK_MS) {
+    for (const f of units) {
+      if (!f.alive) continue;
+      f.next -= TICK_MS;
+      if (f.next > 0) continue;
+      f.next = f.spd;
+      const plan = attackPlan(f, units);
+      if (!plan) break;
+      for (const tg of plan.targets) { tg.hp -= rollDamage(plan.dmg); if (tg.hp <= 0) tg.alive = false; }
+    }
+    const alive0 = units.some(u => u.side === 0 && u.alive);
+    const alive1 = units.some(u => u.side === 1 && u.alive);
+    if (!alive0 || !alive1) return alive0;
+  }
+  return false; // не убил за три минуты — босс выстоял
 }
 
 /** То же, но с диагностикой длительности — для калибровки в scripts/sim.ts. */

@@ -5,7 +5,7 @@
 import Phaser from 'phaser';
 import { W, H, CHAINS, FONT } from './config';
 import { textureKey } from './sprites';
-import { unitStats, attackPlan, statScale, rollDamage, AttackType, TICK_MS } from './arena';
+import { unitStats, attackPlan, statScale, rollDamage, AttackType, TICK_MS, BossFight } from './arena';
 import { jingleFanfare, failSound, clickSound } from './audio';
 import { button } from './ui';
 import { t } from './i18n';
@@ -15,6 +15,7 @@ interface Fighter {
   hp: number; maxHp: number; dmg: number; spd: number; type: AttackType;
   next: number; alive: boolean; side: 0 | 1;
   obj: Phaser.GameObjects.Container; bar: Phaser.GameObjects.Graphics;
+  barW: number; // у босса полоса шире: он один и его HP — главный индикатор боя
 }
 
 export function startBattle(
@@ -22,6 +23,7 @@ export function startBattle(
   player: number[][], playerFactor: number, // >1 при реванше с рекламным бустом
   enemy: number[][], enemyFactor: number, enemyName: string,
   onEnd: (win: boolean) => void,
+  boss?: BossFight, // бой с боссом: вместо пятёрки один гигант с явными характеристиками
 ) {
   const root = scene.add.container(0, 0).setDepth(70);
   // Полностью перекрываем поле: через полупрозрачный фон просвечивали кнопки и клетки,
@@ -39,34 +41,41 @@ export function startBattle(
   root.add(scene.add.text(W / 2, H / 2, 'VS', { fontFamily: FONT, fontSize: '46px', color: '#ffffff', fontStyle: '900' }).setOrigin(0.5).setAlpha(0.13));
 
   const fighters: Fighter[] = [];
-  const mkFighter = (ch: number, lv: number, side: 0 | 1, i: number, powerFactor: number) => {
-    const st = unitStats(ch, lv, side === 0);
-    const factor = statScale(powerFactor); // множитель силы → множитель характеристики
-    const x = side === 0 ? 170 : W - 170, y = 200 + i * 190;
+  const mkFighter = (ch: number, lv: number, side: 0 | 1, i: number, powerFactor: number, stats?: BossFight) => {
+    const st = stats ?? unitStats(ch, lv, side === 0);
+    const factor = stats ? 1 : statScale(powerFactor); // у босса характеристики уже финальные
+    const solo = !!stats;
+    const size = solo ? 220 : 120;
+    const x = side === 0 ? 170 : W - 170, y = solo ? H / 2 - 20 : 200 + i * 190;
     const obj = scene.add.container(x, y);
-    const img = scene.add.image(0, 0, textureKey(ch, lv)).setDisplaySize(120, 120);
+    const img = scene.add.image(0, 0, textureKey(ch, lv)).setDisplaySize(size, size);
     if (side === 1) img.setFlipX(true);
     const bar = scene.add.graphics();
     obj.add([img, bar]);
     root.add(obj);
+    if (solo) // босс дышит: одиночная фигура без движения выглядит мёртвой
+      scene.tweens.add({ targets: img, scale: img.scale * 1.06, yoyo: true, repeat: -1, duration: 900 });
     const f: Fighter = {
       chain: ch, level: lv,
       hp: Math.round(st.hp * factor), maxHp: Math.round(st.hp * factor),
       dmg: Math.round(st.dmg * factor), spd: st.spd, type: st.type,
       next: st.spd * (0.5 + Math.random() * 0.7), alive: true, side, obj, bar,
+      barW: solo ? 200 : 104,
     };
     drawBar(f);
     fighters.push(f);
   };
   player.forEach(([ch, lv], i) => mkFighter(ch, lv, 0, i, playerFactor));
-  enemy.forEach(([ch, lv], i) => mkFighter(ch, lv, 1, i, enemyFactor));
+  if (boss) mkFighter(boss.chain, boss.level, 1, 0, 1, boss);
+  else enemy.forEach(([ch, lv], i) => mkFighter(ch, lv, 1, i, enemyFactor));
 
   function drawBar(f: Fighter) {
+    const w = f.barW, half = w / 2;
     f.bar.clear();
-    f.bar.fillStyle(0x000000, 0.6); f.bar.fillRoundedRect(-52, 66, 104, 12, 6);
+    f.bar.fillStyle(0x000000, 0.6); f.bar.fillRoundedRect(-half, w > 120 ? 118 : 66, w, 12, 6);
     const k = Math.max(0, f.hp / f.maxHp);
     f.bar.fillStyle(k > 0.5 ? 0x5fae57 : k > 0.25 ? 0xffb84d : 0xe0405a);
-    if (k > 0) f.bar.fillRoundedRect(-50, 68, 100 * k, 8, 4);
+    if (k > 0) f.bar.fillRoundedRect(-half + 2, (w > 120 ? 118 : 66) + 2, (w - 4) * k, 8, 4);
   }
 
   let over = false;

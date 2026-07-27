@@ -3,7 +3,7 @@ import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, G
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
-import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, REMATCH_BUFF, EnemyTeam } from './arena';
+import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, REMATCH_BUFF, EnemyTeam, BOSSES, BossDef, bossStats } from './arena';
 import { startBattle } from './battle';
 import { track } from './analytics';
 import { S, QUESTS, STREAK_REWARDS, restore, persist, streakStatus, interstitialAllowed, today, isoWeek, resetProgress } from './state';
@@ -12,7 +12,7 @@ import * as ui from './ui';
 import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene, setMuted, isMuted } from './audio';
 import { openShop, rollChest, ShopApi } from './shop';
 import { buzz, BUZZ } from './haptics';
-import { ACHIEVEMENTS, achValue, achDone, achClaimable, achCountDone, anyAchClaimable, Achievement } from './achievements';
+import { ACHIEVEMENTS, achValue, achDone, achClaimable, achTaken, achCountDone, anyAchClaimable, achId, Achievement } from './achievements';
 import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } from './i18n';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
@@ -1099,15 +1099,15 @@ export class GameScene extends Phaser.Scene {
    * строки только зашумляют — они уходят вниз.
    */
   private achList(p: Phaser.GameObjects.Container) {
-    const rank = (a: Achievement, i: number) => {
-      if (achClaimable(a, i)) return 1000;
-      if (S.achClaimed[i]) return -1;
+    const rank = (a: Achievement) => {
+      if (achClaimable(a)) return 1000;
+      if (achTaken(a)) return -1;
       return Math.min(1, achValue(a) / a.at);
     };
     const rows = ACHIEVEMENTS.map((a, i) => ({ a, i }))
-      .sort((x, y) => rank(y.a, y.i) - rank(x.a, x.i))
+      .sort((x, y) => rank(y.a) - rank(x.a))
       .slice(0, 7);
-    rows.forEach(({ a, i }, row) => {
+    rows.forEach(({ a }, row) => {
       const y = H / 2 - 260 + row * 88;
       const val = achValue(a), done = achDone(a);
       this.addTo(p, ui.card(this, W / 2, y, 616, 76, done ? 0x2f4d3a : 0x322558, 14));
@@ -1116,15 +1116,15 @@ export class GameScene extends Phaser.Scene {
       const prog = a.at > 1 ? `${Math.min(val, a.at)}/${a.at}` : done ? '✔' : '—';
       this.addTo(p, this.add.text(W / 2 - 286, y + 17, `${prog}    +${a.gems}💎`,
         { fontFamily: FONT, fontSize: '18px', color: '#c9beee' }).setOrigin(0, 0.5));
-      if (achClaimable(a, i)) {
+      if (achClaimable(a)) {
         this.addTo(p, ui.button(this, W / 2 + 226, y, 148, 54, t('common.claim'), 0x2e7d5b, () => {
-          S.achClaimed[i] = true; S.gems += a.gems;
+          S.achClaimed.push(achId(a)); S.gems += a.gems;
           tada(); buzz(BUZZ.claim); track('ach_claim', { metric: a.metric, at: a.at });
           this.refreshHud(); persist(true); p.destroy(); this.memePanel('ach');
         }, 19));
-      } else if (S.achClaimed[i] && a.share) {
+      } else if (achTaken(a) && a.share) {
         this.addTo(p, ui.button(this, W / 2 + 226, y, 148, 54, t('ach.share').slice(0, 2), 0x5a48a8, () => this.shareAch(a), 24));
-      } else if (S.achClaimed[i]) {
+      } else if (achTaken(a)) {
         this.addTo(p, this.add.text(W / 2 + 226, y, '✅', { fontSize: '34px' }).setOrigin(0.5));
       }
     });
@@ -1136,6 +1136,69 @@ export class GameScene extends Phaser.Scene {
     navigator.clipboard?.writeText(t(key, { n: achValue(a) })).catch(() => {});
     track('ach_share', { metric: a.metric });
     ui.toast(this, W / 2, H / 2, t('common.copied'));
+  }
+
+  // ---------- боссы лиг: проверка на силу, а не на удачу ----------
+  /**
+   * Босс лиги: пятеро твоих против одного гиганта. Его характеристики статичны и
+   * привязаны к лиге (см. arena.ts), поэтому «прийти позже сильнее» работает буквально:
+   * симуляция показывает, что эталонная пятёрка лиги проигрывает, а та же команда с
+   * пятью уровнями казармы или на уровень выше — выигрывает уверенно.
+   */
+  private bossPanel(i: number) {
+    const def = BOSSES[i];
+    const st = bossStats(def);
+    const name = this.cname(def.chain, def.level);
+    const p = ui.panel(this, t('boss.title', { name }), () => this.arenaPanel());
+    this.addTo(p, this.add.image(W / 2, H / 2 - 250, textureKey(def.chain, def.level)).setDisplaySize(240, 240));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 90, t('boss.desc', {
+      hp: st.hp, dmg: st.dmg, spd: (st.spd / 1000).toFixed(1), type: t(`card.type.${st.type}`).split('—')[0].trim(),
+    }), { fontFamily: FONT, fontSize: '23px', color: '#fff', align: 'center', lineSpacing: 6 }).setOrigin(0.5));
+    // Подсказка про сплэш — не флейвор: против одиночной цели он бьёт в 0.45 силы,
+    // и состав команды решает исход сильнее, чем уровень казармы.
+    this.addTo(p, ui.card(this, W / 2, H / 2 + 20, 600, 116, 0x322558));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 20, t('boss.hint'),
+      { fontFamily: FONT, fontSize: '20px', color: '#c9beee', align: 'center', lineSpacing: 6 }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 120, t('arena.power', { n: Math.round(teamPower(S.team)) }),
+      { fontFamily: FONT, fontSize: '22px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 200, 480, 78, t('boss.fight'), 0x9d2e4d, () => {
+      if (S.team.length < 3) { failSound(); ui.toast(this, W / 2, H / 2, t('arena.needTeam'), '#ff7070'); return; }
+      p.destroy(); this.startBossBattle(i, 1);
+    }, 26));
+  }
+
+  private startBossBattle(i: number, factor: number) {
+    const def = BOSSES[i];
+    track('boss_battle', { league: i });
+    sdk.gameplayStart();
+    startBattle(this, S.team, factor, [], 1, this.cname(def.chain, def.level),
+      win => this.bossResult(i, win), bossStats(def));
+  }
+
+  private bossResult(i: number, win: boolean) {
+    const def = BOSSES[i];
+    S.battles++;
+    if (win) {
+      S.bossBeaten[i] = true;
+      S.gems += def.gems;
+      this.giveEgg('gold'); // главный приз: сутки ожидания и эпическое существо
+      jingleFanfare(); buzz(BUZZ.win);
+      track('boss_win', { league: i });
+    } else {
+      failSound();
+      track('boss_lose', { league: i });
+    }
+    persist(true); this.refreshHud();
+    const p = ui.panel(this, t(win ? 'boss.win' : 'boss.lose'), () => this.arenaPanel());
+    this.addTo(p, this.add.image(W / 2, H / 2 - 240, textureKey(def.chain, def.level))
+      .setDisplaySize(200, 200).setAlpha(win ? 1 : 0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 80, win ? t('boss.reward', { gems: def.gems }) : t('boss.loseInfo'),
+      { fontFamily: FONT, fontSize: win ? '28px' : '23px', color: '#fff', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
+    if (!win)
+      // Реванш с бустом — честный инструмент, когда до победы не хватает совсем чуть-чуть.
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 80, 500, 72, t('boss.rematch', { buff: REMATCH_BUFF }), 0x2e7d5b, () =>
+        sdk.showRewarded(() => { p.destroy(); this.startBossBattle(i, REMATCH_BUFF); }), 22));
+    if (S.battles % INTERSTITIAL.everyNBattles === 0 && interstitialAllowed()) sdk.maybeInterstitial();
   }
 
   // ---------- сезон арены: месячный цикл с мягким сбросом ----------
@@ -1277,6 +1340,18 @@ export class GameScene extends Phaser.Scene {
     if (!pending.length)
       this.addTo(p, this.add.text(W / 2, H / 2 + 150, t('arena.allClaimed'),
         { fontFamily: FONT, fontSize: '22px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+    // Босс лиги: открывается по личному рекорду кубков, побеждается один раз.
+    const bossIdx = Math.min(BOSSES.length - 1, leagueIndex(S.cupsBest));
+    const bossOpen = leagueIndex(S.cupsBest) >= 1; // первый босс — со второй лиги
+    const bossDone = !!S.bossBeaten[bossIdx];
+    const bossName = this.cname(BOSSES[bossIdx].chain, BOSSES[bossIdx].level);
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 196, 560, 58,
+      !bossOpen ? t('boss.locked', { name: t(`league.${LEAGUES[1].key}`) })
+        : bossDone ? t('boss.done') : t('boss.btn', { name: bossName }),
+      !bossOpen || bossDone ? 0x3a3a55 : 0x9d2e4d, () => {
+        if (!bossOpen || bossDone) { failSound(); return; }
+        p.destroy(); this.bossPanel(bossIdx);
+      }, 20));
     // Сезон: сколько осталось и какая рамка надета (тап — сменить).
     this.addTo(p, this.add.text(W / 2, H / 2 + 242, t('season.now', { id: S.season.id || seasonId(), days: this.seasonDaysLeft() }),
       { fontFamily: FONT, fontSize: '20px', color: '#8f86b8' }).setOrigin(0.5));

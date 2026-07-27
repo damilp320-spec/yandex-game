@@ -17,7 +17,7 @@
 //   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
 import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES, PASS } from '../src/config';
-import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
+import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, simulateBoss, bossStats, bossRefTeam, BOSSES, BOSS, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
 /**
@@ -34,6 +34,9 @@ Math.random = () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
+
+/** Сброс ГПСЧ: измерения внутри бисекции должны быть сравнимы между собой. */
+const reseed = () => { rngState = SEED; };
 
 const DAYS = 14;
 const SESSIONS_PER_DAY = 3;
@@ -391,6 +394,36 @@ console.log('\n=== СЕЗОН АРЕНЫ: возврат на плато пос�
     `(${(battles / BATTLES_PER_SESSION).toFixed(1)} сессий; норма 20–35 боёв)`);
   console.log(`  награда за пиковую лигу: ${LEAGUES.map((l, i) => `${l.key} ${SEASON.gems[i]}💎`).join(', ')}`);
   console.log(`  лига после сброса: ${LEAGUES[leagueIndex(from)].key} (была ${LEAGUES[leagueIndex(plateau)].key})`);
+}
+
+// ---------- БОССЫ: ПРОВЕРКА ВОРОТ ----------
+// Бой 1×5 в этой системе бинарен: снежный ком односторонний (босс не теряет урона),
+// поэтому исход почти детерминирован — скан по dps даёт 100% и сразу 0%, без середины.
+// Значит босс это не монетка, а ПРОВЕРКА НА СИЛУ: эталонная пятёрка лиги должна
+// проигрывать, а немного прокачанная — уверенно выигрывать. Так победа приходит от
+// роста команды, а не от везения, и «прийти позже сильнее» работает буквально.
+console.log('\n=== БОССЫ ЛИГ: ворота силы (200 боёв на каждый случай) ===');
+{
+  const rate = (team: number[][], def: typeof BOSSES[number], barracks: number) => {
+    reseed();
+    S.upgrades = { atk: barracks, hp: barracks };
+    const boss = bossStats(def);
+    let w = 0;
+    for (let n = 0; n < 200; n++) if (simulateBoss(team, boss)) w++;
+    return Math.round((100 * w) / 200);
+  };
+  BOSSES.forEach((def, i) => {
+    const ref = bossRefTeam(def);
+    const noSplash: number[][] = ref.map(([ch, lv]) => [unitStats(ch, lv, false).type === 'splash' ? (ch + 2) % 12 : ch, lv]);
+    const base = rate(ref, def, 0);
+    const up5 = rate(ref, def, 5);
+    const lvUp = rate(ref.map(([ch, lv]) => [ch, Math.min(5, lv + 1)]), def, 0);
+    const single = rate(noSplash, def, 0);
+    S.upgrades = { atk: 0, hp: 0 };
+    const ok = base <= 20 && (up5 >= 80 || lvUp >= 80);
+    console.log(`  босс ${i + 1} (${def.kind}, ур.${def.level + 1}): эталон ${base}% · казарма+5 ${up5}% · ` +
+      `уровень+1 ${lvUp}% · без сплэша ${single}% — ${ok ? 'OK' : 'ПРОВЕРЬ BOSS.kinds[].dps'}`);
+  });
 }
 
 // ---------- БОИ ----------
