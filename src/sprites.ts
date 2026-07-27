@@ -3,7 +3,7 @@
 // Качество за счёт слоёв: тень → тело → объёмная подсветка → контур → лицо →
 // аксессуары уровня (корона, аура, искры).
 import Phaser from 'phaser';
-import { CHAINS, Chain } from './config';
+import { CHAINS, Chain, MYTHICS, MYTHIC_BASE, MYTHIC_LEVEL } from './config';
 
 export const EVENT_CHAIN_INDEX = CHAINS.length;
 export const textureKey = (chain: number, level: number) => `spr_${chain}_${level}`;
@@ -21,7 +21,27 @@ export function generateSprites(scene: Phaser.Scene, chains: Chain[], startIndex
     }));
 }
 
-function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number) {
+/**
+ * Спрайты мификов: форма и палитра первого родителя, смешанная с цветом второго,
+ * плюс кольцо и искры цвета второго родителя — гибрид читается с первого взгляда,
+ * и всё это по-прежнему рисуется кодом, без ассетов.
+ */
+export function generateMythicSprites(scene: Phaser.Scene) {
+  MYTHICS.forEach((m, i) => {
+    const key = textureKey(MYTHIC_BASE + i, MYTHIC_LEVEL);
+    if (scene.textures.exists(key)) return;
+    const a = CHAINS[m.a], b = CHAINS[m.b];
+    drawCreature(scene, key, { ...a, color: mix(a.color, b.color) }, 5, b.color);
+  });
+}
+
+/** Смешение двух цветов пополам — палитра гибрида. */
+function mix(x: number, y: number): number {
+  const ch = (sh: number) => Math.round((((x >> sh) & 255) + ((y >> sh) & 255)) / 2);
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
+
+function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number, hybrid?: number) {
   const g = scene.add.graphics();
   const c = cfg.color, size = 34 + lv * 5, cx = 64, cy = 66;
 
@@ -214,6 +234,12 @@ function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number) 
     g.fillTriangle(cx - 10, ty + 14, cx, ty - 6, cx + 10, ty + 14);
     g.fillTriangle(cx + 8, ty + 14, cx + 14, ty - 2, cx + 20, ty + 14);
     g.fillStyle(0xff5050); g.fillCircle(cx, ty + 2, 3);
+  }
+
+  if (hybrid !== undefined) { // мифик: кольцо и искры цвета второго родителя
+    g.lineStyle(5, hybrid, 0.85); g.strokeCircle(cx, cy - 4, 57);
+    g.fillStyle(hybrid, 0.95);
+    [[cx, cy - 62], [cx - 50, cy + 34], [cx + 50, cy + 34]].forEach(([sx, sy]) => g.fillCircle(sx, sy, 7));
   }
 
   g.generateTexture(key, 128, 128);

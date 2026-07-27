@@ -238,8 +238,12 @@ export const CHAINS: Chain[] = [
 ];
 
 /** Пассивный доход существа за тик: растёт с уровнем и «дороговизной» цепочки. «67» ×6.7. */
-export const incomeOf = (chain: number, level: number) =>
-  Math.ceil((1 + chain * 0.35) * Math.pow(INCOME.levelMult, level) * (chain === SECRET_CHAIN ? 6.7 : 1));
+export const incomeOf = (chain: number, level: number): number => {
+  // Мифик считается от легендарки своего первого родителя: индекс мифика (100+) в
+  // общую формулу подставлять нельзя — доход улетел бы в космос.
+  if (isMythic(chain)) return Math.ceil(incomeOf(mythicOf(chain).a, 5) * MYTHIC_INCOME_MULT);
+  return Math.ceil((1 + chain * 0.35) * Math.pow(INCOME.levelMult, level) * (chain === SECRET_CHAIN ? 6.7 : 1));
+};
 
 /**
  * Мутация дня: одна цепочка приносит ×2 дохода. Детерминирована от даты, поэтому
@@ -263,8 +267,42 @@ export const ZONES: Zone[] = [
   { id: 'space', bg: '#0a0e24', chains: [9, 10, 11], unlockCoins: 250000, unlockGems: 1500 },
 ];
 
+/**
+ * МИФИКИ: второй виток коллекции для ветеранов. Мифик получается слиянием ДВУХ РАЗНЫХ
+ * легендарок по кураторскому рецепту — восемь пар, а не все 66 комбинаций: рецепт
+ * должен быть находкой, а не таблицей умножения.
+ *
+ * Мифик — самостоятельное существо, а не седьмой уровень цепочки: у него свой спрайт
+ * (палитра первого родителя + акцент второго), своё имя в i18n (`myth.<key>`) и условный
+ * уровень MYTHIC_LEVEL = 6, поэтому он не сливается дальше и занимает одну клетку.
+ * Индексы мификов начинаются с MYTHIC_BASE, чтобы не пересекаться ни с цепочками, ни
+ * с событийной (у неё индекс CHAINS.length).
+ */
+export const MYTHIC_BASE = 100;
+export const MYTHIC_LEVEL = 6;
+/** Доход мифика = доход легендарки первого родителя × это. */
+export const MYTHIC_INCOME_MULT = 3.5;
+
+export interface Mythic { key: string; a: number; b: number }
+export const MYTHICS: Mythic[] = [
+  { key: 'crocaccino', a: 0, b: 1 },   // кофе + крокодил
+  { key: 'tralaccino', a: 2, b: 0 },   // акула + кофе
+  { key: 'discotambo', a: 4, b: 3 },   // кот + барабан
+  { key: 'roboletto', a: 5, b: 6 },    // робот + фрукт
+  { key: 'guardiano67', a: 7, b: 8 },  // дозорный + секретный 67
+  { key: 'cosmocapy', a: 9, b: 10 },   // капибара + НЛО
+  { key: 'pastalien', a: 11, b: 10 },  // паста + НЛО
+  { key: 'sixseventissimo', a: 8, b: 11 }, // 67 + паста
+];
+
+export const isMythic = (chain: number) => chain >= MYTHIC_BASE;
+export const mythicOf = (chain: number) => MYTHICS[chain - MYTHIC_BASE];
+/** Индекс рецепта для пары легендарок (порядок не важен); -1 — такой пары нет. */
+export const mythicByPair = (x: number, y: number) =>
+  MYTHICS.findIndex(m => (m.a === x && m.b === y) || (m.a === y && m.b === x));
+
 /** Цвет рамки/бейджа по уровню; название редкости — i18n.rarityName(). */
-export const RARITY = ['#9aa0b8', '#9aa0b8', '#5a8fd8', '#5a8fd8', '#b85ad0', '#ffe066'];
+export const RARITY = ['#9aa0b8', '#9aa0b8', '#5a8fd8', '#5a8fd8', '#b85ad0', '#ffe066', '#ff8adf'];
 
 /**
  * Лиги по кубкам: имя, цвет рамки и порог. Дают ощутимую отметку прогресса между

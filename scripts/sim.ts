@@ -16,7 +16,7 @@
 //   инкубатор: яйцо за каждую INCUBATOR.winEvery-ю победу и за новую лигу, вылупление
 //   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES, PASS, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES, PASS, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS, MYTHICS, MYTHIC_BASE, MYTHIC_LEVEL, MYTHIC_INCOME_MULT } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, simulateBoss, bossStats, bossRefTeam, BOSSES, BOSS, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
@@ -437,6 +437,33 @@ console.log('\n=== ПРЕСТИЖ: сколько занимает следую�
       `+${got} нейронов · перки ${PERKS.map(p => `${p.key} ${perks[p.key]}`).join(', ')}`);
   }
   console.log('  пол скорости — не экономика, а руки игрока: ACTIONS_PER_MIN действий в минуту,\n  поэтому заходы упираются в ~7 дней и дальше перки дают не скорость, а удобство');
+}
+
+// ---------- МИФИКИ ----------
+// Мифик стоит двух легендарок, поэтому должен быть заметно сильнее одной — но не
+// настолько, чтобы ломать лестницу арены (соперник упирается в множитель ×3).
+console.log('\n=== МИФИКИ: доход и сила ===');
+{
+  const legend = incomeOf(0, 5);
+  const myth = incomeOf(MYTHIC_BASE, MYTHIC_LEVEL);
+  console.log(`  доход: легендарка ${fmt(legend)}🪙/тик → мифик ${fmt(myth)}🪙/тик ` +
+    `(×${(myth / legend).toFixed(1)}, задумано ×${MYTHIC_INCOME_MULT})`);
+  const legTeam: number[][] = Array.from({ length: 5 }, (_, i) => [i, 5]);
+  const mythTeam: number[][] = MYTHICS.slice(0, 5).map((_, i) => [MYTHIC_BASE + i, MYTHIC_LEVEL]);
+  S.upgrades = { atk: 0, hp: 0 };
+  console.log(`  сила команды: пять легендарок ${Math.round(teamPower(legTeam, false))} → ` +
+    `пять мификов ${Math.round(teamPower(mythTeam, false))} (×${(teamPower(mythTeam, false) / teamPower(legTeam, false)).toFixed(2)})`);
+  // Лестница должна догонять мифик-состав: иначе игрок выигрывает всё подряд.
+  reseed();
+  S.team = mythTeam;
+  let w = 0;
+  for (let n = 0; n < 300; n++) {
+    S.cups = 3000;
+    const en = makeEnemy();
+    if (simulateBattle(S.team, en.team, 1, en.factor)) w++;
+  }
+  const rate = Math.round((100 * w) / 300);
+  console.log(`  мифик-состав на 3000🏆: ${rate}% побед — ${rate <= 75 ? 'OK, лестница догоняет' : 'ПЛОХО: соперник упёрся в потолок множителя'}`);
 }
 
 // ---------- СЕЗОН АРЕНЫ ----------

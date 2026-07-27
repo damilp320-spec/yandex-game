@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS, MYTHICS, MYTHIC_BASE, MYTHIC_LEVEL, isMythic, mythicOf, mythicByPair } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
-import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
+import { generateSprites, generateMythicSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
 import { unitStats, teamPower, upgradeCost, ARENA_MILESTONES, makeEnemy, cupsDelta, REMATCH_BUFF, EnemyTeam, BOSSES, BossDef, bossStats } from './arena';
 import { startBattle } from './battle';
@@ -54,10 +54,21 @@ export class GameScene extends Phaser.Scene {
   };
 
   /** Конфиг цепочки с учётом событийной (индекс за пределами CHAINS). */
-  private chainCfg(i: number): Chain { return i === EVENT_CHAIN_INDEX && this.evCfg ? this.evCfg : CHAINS[i]; }
+  private chainCfg(i: number): Chain {
+    if (isMythic(i)) {
+      // Семь «уровней» — чтобы MYTHIC_LEVEL оказался максимумом цепочки и мифик
+      // нельзя было слить дальше. Имена мификов живут в i18n, не здесь.
+      const m = mythicOf(i);
+      return { id: `myth_${m.key}`, color: CHAINS[m.a].color, names: [...CHAINS[m.a].names, m.key] };
+    }
+    return i === EVENT_CHAIN_INDEX && this.evCfg ? this.evCfg : CHAINS[i];
+  }
 
   /** Локализованное имя существа. */
-  private cname(chain: number, level: number): string { return creatureName(this.chainCfg(chain), level); }
+  private cname(chain: number, level: number): string {
+    if (isMythic(chain)) return t(`myth.${mythicOf(chain).key}`);
+    return creatureName(this.chainCfg(chain), level);
+  }
 
   constructor() { super('game'); }
 
@@ -89,6 +100,7 @@ export class GameScene extends Phaser.Scene {
     this.mutChain = mutationChain();
     generateSprites(this, CHAINS, 0);
     if (this.evCfg) generateSprites(this, [this.evCfg], EVENT_CHAIN_INDEX);
+    generateMythicSprites(this);
 
     this.drawBoard();
     this.drawHud();
@@ -316,7 +328,9 @@ export class GameScene extends Phaser.Scene {
     const { x, y } = this.cellXY(r, c);
     const box = this.add.container(x, y);
     const img = this.add.image(0, 0, textureKey(chain, level)).setDisplaySize(114, 114);
-    const badge = this.add.text(42, 42, `${level + 1}`, { fontFamily: FONT, fontSize: '20px', color: RARITY[level], fontStyle: '800' }).setOrigin(0.5).setStroke('#1a1230', 4);
+    const badge = this.add.text(42, 42, isMythic(chain) ? '🧪' : `${level + 1}`,
+      { fontFamily: FONT, fontSize: '20px', color: RARITY[Math.min(level, RARITY.length - 1)], fontStyle: '800' })
+      .setOrigin(0.5).setStroke('#1a1230', 4);
     box.add([img, badge]).setSize(GRID.cell, GRID.cell).setInteractive({ draggable: true });
     // Мутировавшая цепочка помечена прямо на поле: игрок видит, кого сегодня растить.
     if (chain === this.mutChain) box.add(ui.chip(this, -40, -44, 52, 24, `×${MUTATION_MULT}`, '#7fdc8f', 0x14301f));
@@ -328,7 +342,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private checkDiscovery(chain: number, level: number, silent: boolean) {
-    if (chain >= CHAINS.length) return; // событийные существа не входят в Мемпедию
+    if (chain >= CHAINS.length) return; // событийные и мифики — вне сетки Мемпедии
     if (S.discovered[chain][level]) return;
     S.discovered[chain][level] = true;
     if (silent) return;
@@ -799,6 +813,12 @@ export class GameScene extends Phaser.Scene {
         p.destroy();
       }, 24));
 
+    // Мифики: слить две РАЗНЫЕ легендарки по кураторскому рецепту.
+    if (item.level === 5 && !isMythic(item.chain))
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 520, 66, t('myth.fuse'), 0x8f5ad0, () => {
+        p.destroy(); this.fusionPicker(item);
+      }, 22));
+
     const sell = () => {
       addCoins(price);
       S.sold++;
@@ -808,7 +828,8 @@ export class GameScene extends Phaser.Scene {
       this.persistBoard(true); this.refreshHud();
       p.destroy();
     };
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 210, 520, 74, t('card.sell', { n: price }), 0x2e7d5b, () => {
+    this.addTo(p, ui.button(this, W / 2, H / 2 + (item.level === 5 && !isMythic(item.chain) ? 248 : 210), 520, 74,
+      t('card.sell', { n: price }), 0x2e7d5b, () => {
       // Легендарку продают только с подтверждением: собирается она долго.
       if (item.level < 5) { sell(); return; }
       const c = ui.panel(this, t('card.sellSure'));
@@ -824,6 +845,97 @@ export class GameScene extends Phaser.Scene {
     const at = this.findItem(item);
     if (at) this.grid[at[0]][at[1]] = null;
     item.obj.destroy();
+  }
+
+  // ---------- мифики: слияние двух легендарок ----------
+  /**
+   * Выбор второй легендарки. Неверная пара НЕ съедает существ — только подсказка:
+   * эксперименты должны быть безопасными, иначе никто не станет пробовать, а
+   * рецептов всего восемь и найти их — часть игры.
+   */
+  private fusionPicker(first: Item) {
+    const p = ui.panel(this, t('myth.pickTitle'), () => this.creaturePanel(first));
+    const others: Item[] = [];
+    for (let r = 0; r < this.maxRows(); r++) for (let c = 0; c < GRID.cols; c++) {
+      const it = this.grid[r][c];
+      if (it && it !== first && it.level === 5 && !isMythic(it.chain) && it.chain !== first.chain) others.push(it);
+    }
+    this.addTo(p, this.add.image(W / 2, H / 2 - 300, textureKey(first.chain, 5)).setDisplaySize(150, 150));
+    if (!others.length) {
+      this.addTo(p, this.add.text(W / 2, H / 2 - 60, t('myth.pickEmpty'),
+        { fontFamily: FONT, fontSize: '25px', color: '#fff', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
+      return;
+    }
+    others.slice(0, 12).forEach((it, i) => {
+      const x = W / 2 - 210 + (i % 3) * 210, y = H / 2 - 140 + Math.floor(i / 3) * 180;
+      const img = this.add.image(x, y, textureKey(it.chain, 5)).setDisplaySize(130, 130).setInteractive();
+      img.on('pointerdown', () => { p.destroy(); this.tryFuse(first, it); });
+      this.addTo(p, img);
+      this.addTo(p, this.add.text(x, y + 78, this.cname(it.chain, 5),
+        { fontFamily: FONT, fontSize: '16px', color: '#c9beee', align: 'center', wordWrap: { width: 190 } }).setOrigin(0.5));
+    });
+  }
+
+  private tryFuse(a: Item, b: Item) {
+    const idx = mythicByPair(a.chain, b.chain);
+    if (idx < 0) { // безопасный отказ: существа целы
+      failSound(); buzz(BUZZ.fail);
+      ui.toast(this, W / 2, GRID.y + 100, t('myth.nope'), '#ff9d70');
+      track('fusion_fail');
+      return;
+    }
+    const at = this.findItem(a)!;
+    this.removeItem(a); this.removeItem(b);
+    const chain = MYTHIC_BASE + idx;
+    this.spawnItem(chain, MYTHIC_LEVEL, ...at);
+    const key = MYTHICS[idx].key;
+    if (!S.mythics.includes(key)) S.mythics.push(key);
+    jingleFanfare(); tada(); buzz(BUZZ.win);
+    track('fusion_ok', { mythic: key });
+    this.persistBoard(true); this.refreshHud();
+    this.mythicPanel(idx);
+  }
+
+  private mythicPanel(idx: number) {
+    const chain = MYTHIC_BASE + idx;
+    const name = this.cname(chain, MYTHIC_LEVEL);
+    const p = ui.panel(this, t('myth.born'));
+    this.addTo(p, this.add.image(W / 2, H / 2 - 260, textureKey(chain, MYTHIC_LEVEL)).setDisplaySize(230, 230));
+    // Имя — отдельной строкой: в шапку панели длинные мифик-имена не влезают.
+    this.addTo(p, this.add.text(W / 2, H / 2 - 120, name,
+      { fontFamily: FONT, fontSize: '30px', color: '#ff8adf', fontStyle: '800', align: 'center', wordWrap: { width: 600 } }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 40, t('myth.desc'),
+      { fontFamily: FONT, fontSize: '24px', color: '#fff', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 80, t('card.income', { n: this.itemIncome(chain, MYTHIC_LEVEL) }),
+      { fontFamily: FONT, fontSize: '25px', color: '#ffe066', fontStyle: '700' }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 170, 480, 70, t('myth.brag'), 0x2e7d5b, () => {
+      navigator.clipboard?.writeText(t('myth.share', { name })).catch(() => {});
+      track('mythic_share');
+      ui.toast(this, W / 2, H / 2 + 120, t('common.copied'));
+    }, 22));
+  }
+
+  /** Вкладка мификов: открытые — портретом, закрытые — силуэтами родителей-подсказкой. */
+  private mythList(p: Phaser.GameObjects.Container) {
+    MYTHICS.forEach((m, i) => {
+      const y = H / 2 - 290 + i * 88;
+      const found = S.mythics.includes(m.key);
+      this.addTo(p, ui.card(this, W / 2, y, 616, 80, found ? 0x4a2f6e : 0x2a2247, 14));
+      if (found) {
+        this.addTo(p, this.add.image(W / 2 - 250, y, textureKey(MYTHIC_BASE + i, MYTHIC_LEVEL)).setDisplaySize(66, 66));
+        this.addTo(p, this.add.text(W / 2 - 200, y, this.cname(MYTHIC_BASE + i, MYTHIC_LEVEL),
+          { fontFamily: FONT, fontSize: '21px', color: '#ff8adf', fontStyle: '700', wordWrap: { width: 420 } }).setOrigin(0, 0.5));
+      } else {
+        // Силуэты родителей: форму узнаёт тот, кто знает ростер, остальным — загадка.
+        this.addTo(p, this.add.text(W / 2 - 250, y, '🧪', { fontSize: '34px' }).setOrigin(0.5).setAlpha(0.4));
+        [m.a, m.b].forEach((ch, k) => {
+          this.addTo(p, this.add.image(W / 2 - 190 + k * 70, y, textureKey(ch, 5))
+            .setDisplaySize(60, 60).setTint(0x120c22).setAlpha(0.85));
+        });
+        this.addTo(p, this.add.text(W / 2 - 56, y, t('myth.hint'),
+          { fontFamily: FONT, fontSize: '18px', color: '#6b6490', wordWrap: { width: 300 } }).setOrigin(0, 0.5));
+      }
+    });
   }
 
   // ---------- ежедневный бонус ----------
@@ -1145,8 +1257,12 @@ export class GameScene extends Phaser.Scene {
     // Обнуляем ровно то, что обещали в списке: поля, локации, монеты и цену существ.
     S.coins = 0;
     S.lifetimeCoins = 0;   // нейроны следующего переезда считаются за новый виток
+    // Мифики переезжают с игроком: они стоят двух легендарок, и терять их при
+    // переезде значило бы «не сливай мификов перед престижем» — плохое правило.
+    const kept = S.itemsZ.flat().filter(([, , ch]) => isMythic(ch));
     S.itemsZ = ZONES.map(() => []);
     S.itemsZ[0] = [[2, 2, 0, 0], [2, 3, 0, 0]]; // пара существ, чтобы поле не встретило пустотой
+    kept.slice(0, 5).forEach(([, , ch, lv], i) => S.itemsZ[0].push([0, i, ch, lv]));
     S.zone = 0;
     S.zoneUnlocked = ZONES.map((_, i) => i === 0);
     S.rowUnlocked = false;
@@ -1186,20 +1302,23 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- Мемпедия и награды: «музей игрока» на двух вкладках ----------
-  private memePanel(tab: 'pedia' | 'ach' = 'pedia') {
+  private memePanel(tab: 'pedia' | 'ach' | 'myth' = 'pedia') {
     const total = CHAINS.reduce((n, ch) => n + ch.names.length, 0);
     const found = S.discovered.flat().filter(Boolean).length;
     const p = ui.panel(this, tab === 'pedia'
       ? t('pedia.title', { found, total })
-      : t('ach.title', { done: achCountDone(), total: ACHIEVEMENTS.length }));
-    const tabBtn = (x: number, key: string, to: 'pedia' | 'ach') =>
-      this.addTo(p, ui.button(this, x, H / 2 - 352, 300, 52, t(key), tab === to ? 0x2e7d5b : 0x3a3a55, () => {
+      : tab === 'ach' ? t('ach.title', { done: achCountDone(), total: ACHIEVEMENTS.length })
+        : t('myth.title', { found: S.mythics.length, total: MYTHICS.length }));
+    const tabBtn = (x: number, key: string, to: 'pedia' | 'ach' | 'myth') =>
+      this.addTo(p, ui.button(this, x, H / 2 - 352, 206, 52, t(key), tab === to ? 0x2e7d5b : 0x3a3a55, () => {
         if (tab === to) return;
         p.destroy(); this.memePanel(to);
-      }, 20));
-    tabBtn(W / 2 - 158, 'ach.tabPedia', 'pedia');
-    tabBtn(W / 2 + 158, 'ach.tab', 'ach');
+      }, 18));
+    tabBtn(W / 2 - 212, 'ach.tabPedia', 'pedia');
+    tabBtn(W / 2, 'ach.tab', 'ach');
+    tabBtn(W / 2 + 212, 'myth.tab', 'myth');
     if (tab === 'ach') { this.achList(p); return; }
+    if (tab === 'myth') { this.mythList(p); return; }
     // Сетка портретов: ряд — цепочка, колонка — уровень. Тап по портрету — имя.
     const x0 = W / 2 - 180, y0 = H / 2 - 288;
     CHAINS.forEach((cfg, ci) => {

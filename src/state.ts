@@ -62,6 +62,7 @@ export const S = {
   lifetimeCoins: 0,         // заработано за всё время — из этого считаются нейроны
   prestige: 0,              // сколько раз переезжал
   neurons: 0,
+  mythics: [] as string[],  // открытые мифики (ключи рецептов) — часть коллекции
   perks: { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0 } as Record<string, number>,
   // «Лабораторный журнал»: сезонный трек. premium — id сезона, за который куплен.
   pass: { season: '', points: 0, claimed: [] as boolean[], premium: '' },
@@ -127,6 +128,7 @@ function ensureShapes() {
   S.bossBeaten ??= [];
   S.tour ??= { weekend: '', wins: 0, claimed: [] };
   S.skins ??= [];
+  S.mythics ??= [];
   S.perks = { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0, ...(S.perks ?? {}) };
   S.lifetimeCoins = Math.max(S.lifetimeCoins ?? 0, S.coins);
   S.skin ||= 'default';
@@ -187,6 +189,8 @@ export function resetProgress() {
     battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, cupsBest: 0, wins: 0,
     season: { id: '', peak: 0 }, frames: [], frame: '', bossBeaten: [],
     tour: { weekend: '', wins: 0, claimed: [] }, skins: [], skin: 'default',
+    lifetimeCoins: 0, prestige: 0, neurons: 0, mythics: [],
+    perks: { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0 },
     pass: { season: '', points: 0, claimed: [], premium: '' },
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
     starterOffered: false, tips: { income: false, tap: false, arena: false, card: false },

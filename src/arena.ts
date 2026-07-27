@@ -1,7 +1,7 @@
 // Арена: боевые характеристики, генерация противников под кубки игрока,
 // милстоуны наград. Соперники — симуляция (правдоподобные ники, сила ±15%),
 // поэтому «оффлайн противника» не существует как проблема.
-import { CHAINS } from './config';
+import { CHAINS, isMythic, mythicOf } from './config';
 import { S } from './state';
 import { nicks } from './i18n';
 
@@ -115,9 +115,12 @@ export const REMATCH_BUFF = 1.25;
  */
 export const statScale = (factor: number) => Math.sqrt(factor);
 
+/** Архетип и балансовый вес мифик берёт у первого родителя: индекса 100+ в таблицах нет. */
+const archChain = (chain: number) => (isMythic(chain) ? mythicOf(chain).a : chain);
+
 /** Характеристики бойца с учётом прокачки казармы (монетный синк). */
 export function unitStats(chain: number, level: number, upgraded = true): UnitStats {
-  const a = ARCH[chain % ARCH.length];
+  const a = ARCH[archChain(chain) % ARCH.length];
   const up = upgraded ? S.upgrades : { atk: 0, hp: 0 };
   return {
     hp: Math.round(48 * a.hp * Math.pow(1.85, level) * (1 + 0.05 * up.hp)),
@@ -139,7 +142,7 @@ export function unitStats(chain: number, level: number, upgraded = true): UnitSt
  */
 export const unitPower = (s: UnitStats) =>
   (Math.pow(s.hp, HP_EXP) * s.dmg * (1000 / s.spd) * BALANCE.typeValue[s.type]
-    * (BALANCE.chainValue[s.chain % BALANCE.chainValue.length] ?? 1)) / 10;
+    * (BALANCE.chainValue[archChain(s.chain) % BALANCE.chainValue.length] ?? 1)) / 10;
 
 export const teamPower = (team: number[][], upgraded = true) =>
   team.reduce((sum, [ch, lv]) => sum + unitPower(unitStats(ch, lv, upgraded)), 0);
