@@ -12,6 +12,7 @@ import * as ui from './ui';
 import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene, setMuted, isMuted } from './audio';
 import { openShop, rollChest, ShopApi } from './shop';
 import { buzz, BUZZ } from './haptics';
+import { ACHIEVEMENTS, achValue, achDone, achClaimable, achCountDone, anyAchClaimable, Achievement } from './achievements';
 import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } from './i18n';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
@@ -37,6 +38,7 @@ export class GameScene extends Phaser.Scene {
   private golden?: Phaser.GameObjects.Image;
   private questBadge!: Phaser.GameObjects.Arc;
   private arenaBadge!: Phaser.GameObjects.Arc;
+  private pediaBadge?: Phaser.GameObjects.Arc;
   private arenaBtn!: Phaser.GameObjects.Container;
   private lockedOverlay?: Phaser.GameObjects.Container;
   private hint?: Phaser.GameObjects.Text;
@@ -157,7 +159,7 @@ export class GameScene extends Phaser.Scene {
     this.comboLast = now;
     const gain = Math.ceil(this.itemIncome(item.chain, item.level) / 2) * this.comboCount;
     S.coins += gain;
-    S.quests.progress.taps++;
+    S.quests.progress.taps++; S.stats.taps++;
     clickSound(this.comboCount);
     this.tweens.add({ targets: item.obj, scale: { from: 0.85, to: 1 }, duration: 120 });
     ui.toast(this, item.obj.x, item.obj.y - 30, this.comboCount > 1 ? `+${gain} ×${this.comboCount}` : `+${gain}`, '#ffe066');
@@ -178,6 +180,7 @@ export class GameScene extends Phaser.Scene {
       const reward = Math.max(GOLDEN.minReward, this.totalIncome() * Math.round(GOLDEN.rewardSec * 1000 / INCOME.periodMs));
       S.coins += reward;
       jingleFanfare(); buzz(BUZZ.golden);
+      S.stats.golden++;
       track('golden_tap');
       ui.toast(this, img.x, img.y - 40, t('golden.tap', { n: reward }));
       img.destroy();
@@ -403,7 +406,7 @@ export class GameScene extends Phaser.Scene {
     const level = a.level + 1;
     this.spawnItem(a.chain, level, ...at);
     jingleMerge(level, a.chain);
-    S.quests.progress.merges++;
+    S.quests.progress.merges++; S.stats.merges++;
     S.score += level * 2;
     if (level >= 4) track('merge_high', { level });
     if (S.battle.side >= 0 && a.chain === S.battle.side) S.battle.points += level; // очки «Битвы недели»
@@ -526,6 +529,7 @@ export class GameScene extends Phaser.Scene {
     ui.navItem(this, 200, 1222, '📋', t('nav.quests'), () => this.questsPanel());
     this.questBadge = this.add.circle(232, 1196, 9, 0xff5050).setDepth(2);
     ui.navItem(this, 520, 1222, '📖', t('nav.pedia'), () => this.memePanel());
+    this.pediaBadge = this.add.circle(552, 1196, 9, 0xff5050).setDepth(2);
     ui.navItem(this, 642, 1222, '⚙️', t('nav.settings'), () => this.settingsPanel());
 
     // Главная кнопка: приподнята в зазор между кнопками действий, со свечением.
@@ -654,6 +658,7 @@ export class GameScene extends Phaser.Scene {
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
     this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
+    this.pediaBadge?.setVisible(anyAchClaimable());
     this.checkTips();
   }
 
@@ -675,7 +680,7 @@ export class GameScene extends Phaser.Scene {
       S.spawnBought++; // цена растёт только от покупок за монеты
     }
     this.spawnItem(this.smartChain(), 0, ...cell);
-    S.quests.progress.spawns++;
+    S.quests.progress.spawns++; S.stats.spawns++;
     if (free) coinSound();
     this.tickSpawnButton();
     this.refreshHud();
@@ -889,15 +894,25 @@ export class GameScene extends Phaser.Scene {
     this.addTo(p, this.add.text(W / 2, H / 2 + 300, t('event.footer'), { fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
   }
 
-  // ---------- Мемпедия ----------
-  private memePanel() {
+  // ---------- Мемпедия и награды: «музей игрока» на двух вкладках ----------
+  private memePanel(tab: 'pedia' | 'ach' = 'pedia') {
     const total = CHAINS.reduce((n, ch) => n + ch.names.length, 0);
     const found = S.discovered.flat().filter(Boolean).length;
-    const p = ui.panel(this, t('pedia.title', { found, total }));
+    const p = ui.panel(this, tab === 'pedia'
+      ? t('pedia.title', { found, total })
+      : t('ach.title', { done: achCountDone(), total: ACHIEVEMENTS.length }));
+    const tabBtn = (x: number, key: string, to: 'pedia' | 'ach') =>
+      this.addTo(p, ui.button(this, x, H / 2 - 352, 300, 52, t(key), tab === to ? 0x2e7d5b : 0x3a3a55, () => {
+        if (tab === to) return;
+        p.destroy(); this.memePanel(to);
+      }, 20));
+    tabBtn(W / 2 - 158, 'ach.tabPedia', 'pedia');
+    tabBtn(W / 2 + 158, 'ach.tab', 'ach');
+    if (tab === 'ach') { this.achList(p); return; }
     // Сетка портретов: ряд — цепочка, колонка — уровень. Тап по портрету — имя.
-    const x0 = W / 2 - 180, y0 = H / 2 - 352;
+    const x0 = W / 2 - 180, y0 = H / 2 - 288;
     CHAINS.forEach((cfg, ci) => {
-      const y = y0 + ci * 60;
+      const y = y0 + ci * 56;
       this.addTo(p, this.add.image(x0 - 100, y, textureKey(ci, 0)).setDisplaySize(42, 42).setAlpha(0.85));
       cfg.names.forEach((_ru, lv) => {
         const x = x0 + lv * 72;
@@ -915,6 +930,51 @@ export class GameScene extends Phaser.Scene {
         }
       });
     });
+  }
+
+  /**
+   * Список наград. Показываем семь строк: сначала то, что можно забрать, потом
+   * самое близкое к цели. Полный список из 28 в окно не влезет, а забранные
+   * строки только зашумляют — они уходят вниз.
+   */
+  private achList(p: Phaser.GameObjects.Container) {
+    const rank = (a: Achievement, i: number) => {
+      if (achClaimable(a, i)) return 1000;
+      if (S.achClaimed[i]) return -1;
+      return Math.min(1, achValue(a) / a.at);
+    };
+    const rows = ACHIEVEMENTS.map((a, i) => ({ a, i }))
+      .sort((x, y) => rank(y.a, y.i) - rank(x.a, x.i))
+      .slice(0, 7);
+    rows.forEach(({ a, i }, row) => {
+      const y = H / 2 - 260 + row * 88;
+      const val = achValue(a), done = achDone(a);
+      this.addTo(p, ui.card(this, W / 2, y, 616, 76, done ? 0x2f4d3a : 0x322558, 14));
+      this.addTo(p, this.add.text(W / 2 - 286, y - 15, t(`ach.${a.metric}`, { n: a.at }),
+        { fontFamily: FONT, fontSize: '22px', color: '#fff', fontStyle: '700' }).setOrigin(0, 0.5));
+      const prog = a.at > 1 ? `${Math.min(val, a.at)}/${a.at}` : done ? '✔' : '—';
+      this.addTo(p, this.add.text(W / 2 - 286, y + 17, `${prog}    +${a.gems}💎`,
+        { fontFamily: FONT, fontSize: '18px', color: '#c9beee' }).setOrigin(0, 0.5));
+      if (achClaimable(a, i)) {
+        this.addTo(p, ui.button(this, W / 2 + 226, y, 148, 54, t('common.claim'), 0x2e7d5b, () => {
+          S.achClaimed[i] = true; S.gems += a.gems;
+          tada(); buzz(BUZZ.claim); track('ach_claim', { metric: a.metric, at: a.at });
+          this.refreshHud(); persist(true); p.destroy(); this.memePanel('ach');
+        }, 19));
+      } else if (S.achClaimed[i] && a.share) {
+        this.addTo(p, ui.button(this, W / 2 + 226, y, 148, 54, t('ach.share').slice(0, 2), 0x5a48a8, () => this.shareAch(a), 24));
+      } else if (S.achClaimed[i]) {
+        this.addTo(p, this.add.text(W / 2 + 226, y, '✅', { fontSize: '34px' }).setOrigin(0.5));
+      }
+    });
+  }
+
+  /** Хвастовство: у «социальных» наград свой текст — его и копируем в буфер. */
+  private shareAch(a: Achievement) {
+    const key = `ach.share${a.metric[0].toUpperCase()}${a.metric.slice(1)}`;
+    navigator.clipboard?.writeText(t(key, { n: achValue(a) })).catch(() => {});
+    track('ach_share', { metric: a.metric });
+    ui.toast(this, W / 2, H / 2, t('common.copied'));
   }
 
   // ---------- Арена: команда 5 бойцов, кубки, казарма, лидерборд ----------

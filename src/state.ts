@@ -56,6 +56,9 @@ export const S = {
   score: 0,
   battles: 0,               // боёв всего — якорь для interstitial
   sold: 0,                  // продано существ (для аналитики и квестов)
+  // счётчики «за всё время» для достижений (дневные лежат в quests.progress)
+  stats: { merges: 0, taps: 0, spawns: 0, golden: 0 } as Record<string, number>,
+  achClaimed: [] as boolean[],
   // инкубатор: одно яйцо «в работе» + очередь, чтобы награды не пропадали
   egg: null as { type: EggType; startedAt: number; ads: number; adsDay: string } | null,
   eggQueue: [] as EggType[],
@@ -96,6 +99,11 @@ function ensureShapes() {
   while (S.itemsZ.length < ZONES.length) S.itemsZ.push([]);
   while (S.zoneUnlocked.length < ZONES.length) S.zoneUnlocked.push(false);
   while (S.quests.claimed.length < QUESTS.length) S.quests.claimed.push(false);
+  // Старые сейвы: счётчиков достижений могло не быть. Длину achClaimed не выравниваем
+  // (индекс за пределами массива читается как false) — иначе state зависел бы от
+  // achievements, а тот от state: лишний цикл импортов ради ничего.
+  S.achClaimed ??= [];
+  S.stats = { merges: 0, taps: 0, spawns: 0, golden: 0, ...(S.stats ?? {}) };
   QUESTS.forEach(q => { S.quests.progress[q.id] ??= 0; });
   // старые сейвы: подсказки/настройки могли не существовать
   const tips = (S.tips ?? {}) as Partial<typeof S.tips>;
@@ -149,7 +157,8 @@ export function resetProgress() {
     battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, wins: 0,
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
     starterOffered: false, tips: { income: false, tap: false, arena: false, card: false },
-    egg: null, eggQueue: [], eggsHatched: 0, ...keep,
+    egg: null, eggQueue: [], eggsHatched: 0,
+    stats: { merges: 0, taps: 0, spawns: 0, golden: 0 }, achClaimed: [], ...keep,
   });
   ensureShapes();
   persist(true);
