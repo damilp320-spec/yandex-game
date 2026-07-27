@@ -262,6 +262,13 @@ const RU: Record<string, string> = {
   'pass.gained': '📔 +{n}',
   'frame.pass': 'Лаборант',
 
+  'tour.chip': '🏟️ Турнир выходных: {n} побед',
+  'tour.title': '🏟️ Турнир выходных',
+  'tour.desc': 'Победы на арене в субботу и воскресенье\nидут в зачёт турнира. Твой счёт: {n}',
+  'tour.line': '{wins} побед — {reward}',
+  'tour.none': 'Турнир идёт только в выходные.\nЗаходи в субботу и воскресенье!',
+  'tour.coinsMin': '{n} мин дохода',
+
   'boss.btn': '👹 Босс лиги: {name}',
   'boss.done': '👹 Босс лиги побеждён ✅',
   'boss.locked': '👹 Босс откроется в лиге {name}',
@@ -567,6 +574,13 @@ const EN: Record<string, string> = {
   'pass.gained': '📔 +{n}',
   'frame.pass': 'Lab Tech',
 
+  'tour.chip': '🏟️ Weekend cup: {n} wins',
+  'tour.title': '🏟️ Weekend cup',
+  'tour.desc': 'Arena wins on Saturday and Sunday\ncount toward the cup. Your score: {n}',
+  'tour.line': '{wins} wins — {reward}',
+  'tour.none': 'The cup only runs on weekends.\nCome back on Saturday and Sunday!',
+  'tour.coinsMin': '{n} min of income',
+
   'boss.btn': '👹 League boss: {name}',
   'boss.done': '👹 League boss defeated ✅',
   'boss.locked': '👹 Boss unlocks in {name} league',
@@ -869,6 +883,13 @@ const TR: Record<string, string> = {
   'pass.buyAsk': '{id} sezonu premium hattı\n\n• tüm hat ödülleri ×2\n• finalde «Laborant» çerçevesi\n\n{gems}💎 harcanacak?',
   'pass.gained': '📔 +{n}',
   'frame.pass': 'Laborant',
+
+  'tour.chip': '🏟️ Hafta sonu kupası: {n} zafer',
+  'tour.title': '🏟️ Hafta sonu kupası',
+  'tour.desc': 'Cumartesi ve pazar arena zaferleri\nkupaya sayılır. Puanın: {n}',
+  'tour.line': '{wins} zafer — {reward}',
+  'tour.none': 'Kupa sadece hafta sonu geçerli.\nCumartesi ve pazar uğra!',
+  'tour.coinsMin': '{n} dk gelir',
 
   'boss.btn': '👹 Lig patronu: {name}',
   'boss.done': '👹 Lig patronu yenildi ✅',

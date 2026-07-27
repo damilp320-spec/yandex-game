@@ -54,6 +54,8 @@ export const S = {
   season: { id: '', peak: 0 },
   frames: [] as string[],   // заработанные рамки профиля (ключи лиг и особые)
   bossBeaten: [] as boolean[], // боссы лиг: побеждён ли каждый (индекс = лига)
+  // турнир выходных: победы за субботу+воскресенье и забранные тиры
+  tour: { weekend: '', wins: 0, claimed: [] as boolean[] },
   // «Лабораторный журнал»: сезонный трек. premium — id сезона, за который куплен.
   pass: { season: '', points: 0, claimed: [] as boolean[], premium: '' },
   frame: '',                // надетая рамка
@@ -116,6 +118,7 @@ function ensureShapes() {
   S.codesUsed ??= [];
   S.frames ??= [];
   S.bossBeaten ??= [];
+  S.tour ??= { weekend: '', wins: 0, claimed: [] };
   S.season ??= { id: '', peak: 0 };
   S.pass ??= { season: '', points: 0, claimed: [], premium: '' };
   S.cupsBest = Math.max(S.cupsBest ?? 0, S.cups); // старые сейвы: максимум = текущие кубки
@@ -172,6 +175,7 @@ export function resetProgress() {
     spawnBought: 0, incomeRate: 0, boostUntil: 0, boostMult: 1, customNames: {},
     battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, cupsBest: 0, wins: 0,
     season: { id: '', peak: 0 }, frames: [], frame: '', bossBeaten: [],
+    tour: { weekend: '', wins: 0, claimed: [] },
     pass: { season: '', points: 0, claimed: [], premium: '' },
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
     starterOffered: false, tips: { income: false, tap: false, arena: false, card: false },

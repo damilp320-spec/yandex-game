@@ -119,6 +119,31 @@ export const promoByCode = (raw: string): PromoCode | null => {
   return PROMO.find(p => p.code === code && p.until >= day) ?? null;
 };
 
+/**
+ * Турнир выходных: суббота и воскресенье. Сделан НАДСТРОЙКОЙ над обычными боями
+ * арены, а не отдельным режимом с запасом попыток: параллельная экономика попыток
+ * (и реклама за них) — это лишняя сущность, а цель фичи — дать выходным трафиком
+ * повод зайти именно в эти два дня. Порог наград сам ограничивает выдачу.
+ *
+ * Монеты — в минутах дохода поля: фиксированные суммы обесцениваются (как в журнале).
+ */
+export interface TourTier { wins: number; coinsMin?: number; gems?: number; egg?: EggType; chest?: boolean }
+export const TOURNAMENT: TourTier[] = [
+  { wins: 3, coinsMin: 4 },
+  { wins: 6, gems: 15 },
+  { wins: 9, egg: 'rare' },
+  { wins: 12, chest: true, gems: 25 },
+];
+
+/** Идентификатор выходных = дата субботы; суббота и воскресенье считаются вместе. */
+export function weekendId(d = new Date()): string {
+  const day = d.getDay(); // 0 — воскресенье, 6 — суббота
+  if (day !== 0 && day !== 6) return '';
+  const sat = new Date(d);
+  sat.setDate(d.getDate() - (day === 0 ? 1 : 0));
+  return sat.toISOString().slice(0, 10);
+}
+
 export const PRICES = {
   chestGems: 25,
   boostGems: 20,

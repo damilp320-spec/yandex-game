@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -688,7 +688,8 @@ export class GameScene extends Phaser.Scene {
     this.tickEgg();
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable || this.passClaimable());
-    this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cupsBest >= m.cups));
+    this.arenaBadge?.setVisible(this.tourClaimable()
+      || ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cupsBest >= m.cups));
     this.pediaBadge?.setVisible(anyAchClaimable());
     this.checkTips();
   }
@@ -1138,6 +1139,62 @@ export class GameScene extends Phaser.Scene {
     ui.toast(this, W / 2, H / 2, t('common.copied'));
   }
 
+  // ---------- турнир выходных ----------
+  /** Победа в выходные идёт в зачёт турнира; в будни функция ничего не делает. */
+  private tourWin() {
+    const id = weekendId();
+    if (!id) return;
+    if (S.tour.weekend !== id) S.tour = { weekend: id, wins: 0, claimed: [] };
+    S.tour.wins++;
+    track('tour_win', { wins: S.tour.wins });
+  }
+
+  private tourClaimable() {
+    return weekendId() === S.tour.weekend
+      && TOURNAMENT.some((tr, i) => !S.tour.claimed[i] && S.tour.wins >= tr.wins);
+  }
+
+  private tourRewardText(tr: typeof TOURNAMENT[number]): string {
+    return [
+      tr.coinsMin && t('tour.coinsMin', { n: tr.coinsMin }),
+      tr.gems && `${tr.gems}💎`,
+      tr.egg && `🥚 ${t(`egg.${tr.egg}`)}`,
+      tr.chest && t('event.chest'),
+    ].filter(Boolean).join(' + ');
+  }
+
+  private tourPanel() {
+    const id = weekendId();
+    const p = ui.panel(this, t('tour.title'), () => this.arenaPanel());
+    if (!id) {
+      this.addTo(p, this.add.text(W / 2, H / 2 - 60, t('tour.none'),
+        { fontFamily: FONT, fontSize: '26px', color: '#fff', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
+      return;
+    }
+    if (S.tour.weekend !== id) S.tour = { weekend: id, wins: 0, claimed: [] };
+    this.addTo(p, this.add.text(W / 2, H / 2 - 320, '🏟️', { fontSize: '90px' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 210, t('tour.desc', { n: S.tour.wins }),
+      { fontFamily: FONT, fontSize: '23px', color: '#c9beee', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
+    TOURNAMENT.forEach((tr, i) => {
+      const y = H / 2 - 90 + i * 96;
+      const reached = S.tour.wins >= tr.wins, taken = !!S.tour.claimed[i];
+      this.addTo(p, ui.card(this, W / 2, y, 616, 80, taken ? 0x2f4d3a : reached ? 0x3d2f6e : 0x2a2247, 14));
+      this.addTo(p, this.add.text(W / 2 - 286, y, t('tour.line', { wins: tr.wins, reward: this.tourRewardText(tr) }),
+        { fontFamily: FONT, fontSize: '20px', color: reached ? '#fff' : '#8f86b8', wordWrap: { width: 400 } }).setOrigin(0, 0.5));
+      if (taken) this.addTo(p, this.add.text(W / 2 + 240, y, '✅', { fontSize: '32px' }).setOrigin(0.5));
+      else if (reached)
+        this.addTo(p, ui.button(this, W / 2 + 240, y, 130, 56, t('common.claim'), 0x2e7d5b, () => {
+          S.tour.claimed[i] = true;
+          if (tr.coinsMin) S.coins += Math.max(200, Math.round(this.totalIncome() * (60_000 / INCOME.periodMs) * tr.coinsMin));
+          if (tr.gems) S.gems += tr.gems;
+          if (tr.egg) this.giveEgg(tr.egg);
+          if (tr.chest) rollChest(this.api, this, W / 2, H / 2 + 200);
+          tada(); buzz(BUZZ.claim); track('tour_claim', { wins: tr.wins });
+          this.refreshHud(); persist(true); p.destroy(); this.tourPanel();
+        }, 18));
+    });
+  }
+
   // ---------- боссы лиг: проверка на силу, а не на удачу ----------
   /**
    * Босс лиги: пятеро твоих против одного гиганта. Его характеристики статичны и
@@ -1371,7 +1428,12 @@ export class GameScene extends Phaser.Scene {
     }
     // «Битва недели» жила отдельной кнопкой в шапке — перенесена сюда, к состязаниям.
     this.addTo(p, ui.button(this, W / 2 - 92, H / 2 + 336, 176, 48, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 17));
-    this.addTo(p, ui.button(this, W / 2 + 96, H / 2 + 336, 176, 48, t('wb.short'), 0x9d2e4d, () => { p.destroy(); this.battlePanel(); }, 17));
+    // В выходные вторая кнопка отдана турниру: обе фичи недельные, а три кнопки в
+    // уже плотной панели читаются хуже, чем одна актуальная.
+    const wk = !!weekendId();
+    this.addTo(p, ui.button(this, W / 2 + 96, H / 2 + 336, 176, 48,
+      wk ? t('tour.chip', { n: S.tour.weekend === weekendId() ? S.tour.wins : 0 }) : t('wb.short'),
+      wk ? 0x2e6d9d : 0x9d2e4d, () => { p.destroy(); if (wk) this.tourPanel(); else this.battlePanel(); }, wk ? 14 : 17));
   }
 
   /** Пикер бойца: существо переезжает с поля в команду (клетка освобождается). */
@@ -1429,6 +1491,7 @@ export class GameScene extends Phaser.Scene {
     let coins = 0;
     if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
     if (win) this.addPassPoints(PASS.points.win);
+    if (win) this.tourWin();
     if (win && S.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
     sdk.submitScore('cups', S.cups);
     track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
