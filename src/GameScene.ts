@@ -1372,13 +1372,16 @@ export class GameScene extends Phaser.Scene {
       { fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
     ev.milestones.forEach((m, i) => {
       const y = H / 2 - 180 + i * 110;
-      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && t('event.chest'), m.egg && `🥚 ${t(`egg.${m.egg}`)}`].filter(Boolean).join(' + ');
+      const rw = [m.coinsMin && t('pass.coinsMin', { n: m.coinsMin }), m.gems && `${m.gems}💎`,
+        m.chest && t('event.chest'), m.egg && `🥚 ${t(`egg.${m.egg}`)}`].filter(Boolean).join(' + ');
       this.addTo(p, this.add.text(W / 2 - 280, y, `${Math.min(S.event.points, m.points)}/${m.points} ${ev.emoji}\n${rw}`, { fontSize: '25px', color: '#fff' }));
       if (S.event.claimed[i])
         this.addTo(p, this.add.text(W / 2 + 210, y + 24, '✅', { fontSize: '38px' }).setOrigin(0.5));
       else if (S.event.points >= m.points)
         this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, t('common.claim'), 0x2e7d5b, () => {
-          S.event.claimed[i] = true; addCoins(m.coins ?? 0); S.gems += m.gems ?? 0;
+          S.event.claimed[i] = true;
+          if (m.coinsMin) addCoins(Math.max(200, Math.round(this.totalIncome() * (60_000 / INCOME.periodMs) * m.coinsMin)));
+          S.gems += m.gems ?? 0;
           if (m.chest) this.spawnReward(4);
           if (m.egg) this.giveEgg(m.egg);
           jingleFanfare(); track('event_milestone', { points: m.points });

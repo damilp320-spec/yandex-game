@@ -115,6 +115,8 @@ const RU: Record<string, string> = {
   'event.footer': 'Когда событие закончится, его существа\nпревратятся в монеты — ничего не пропадёт!',
   'event.chest': '📦 сундук',
   'event.beach26': 'Пляжный сезон',
+  'event.fall26': 'Осенний сбор',
+  'event.hw26': 'Хэллоуин-движ',
   'event.ny26': 'Новогодний движ',
 
   'arena.title': '🏆 Арена · {n}🏆',
@@ -506,6 +508,8 @@ const EN: Record<string, string> = {
   'event.footer': 'When the event ends its creatures\nturn into coins — nothing is lost!',
   'event.chest': '📦 chest',
   'event.beach26': 'Beach Season',
+  'event.fall26': 'Autumn Harvest',
+  'event.hw26': 'Halloween Party',
   'event.ny26': 'New Year Party',
 
   'arena.title': '🏆 Arena · {n}🏆',
@@ -897,6 +901,8 @@ const TR: Record<string, string> = {
   'event.footer': 'Etkinlik bitince yaratıkları altına\ndönüşür — hiçbir şey kaybolmaz!',
   'event.chest': '📦 sandık',
   'event.beach26': 'Plaj Sezonu',
+  'event.fall26': 'Sonbahar Hasadı',
+  'event.hw26': 'Cadılar Bayramı',
   'event.ny26': 'Yılbaşı Partisi',
 
   'arena.title': '🏆 Arena · {n}🏆',
@@ -1219,6 +1225,8 @@ const LATIN: Record<string, string[]> = {
   ufo: ['Lucino', 'UFOlino', 'Dischetto', 'Ospite Verdino', 'Mega Alienoso', 'Legendo Galattico'],
   noodle: ['Maccherino', 'Nudlino', 'Spaghetti Joe', 'Nudlo Cosmo', 'Giga Pasta', 'Spaghettissimo Prime'],
   beach26: ['Sabbiolino', 'Conchiglino', 'Crabo DJino', 'Palmando Cocosini', 'Grande Solecissimo'],
+  fall26: ['Ghiandino', 'Fogliolino', 'Funghiando', 'Opiato Danzato', 'Grande Amanitario'],
+  hw26: ['Semino di Zucca', 'Zucchetto', 'Zuccando', 'Fantasmello Buu', 'Grande Halloweenissimo'],
   ny26: ['Fioccolino', 'Sugrobino', 'Alberello Ballerino', 'Nonno Gelato', 'Grande Salutissimo'],
 };
 

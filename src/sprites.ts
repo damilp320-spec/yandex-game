@@ -200,6 +200,34 @@ function drawCreature(scene: Phaser.Scene, key: string, cfg: Chain, lv: number, 
       g.lineStyle(4, shade(c, 0.6)); g.strokeEllipse(cx, cy - size * 0.15, size * 1.5, size * 0.9);
       break;
     }
+    case 'fall26': { // осень: мухомор с листьями
+      if (lv >= 3) { // облетевшие листья вокруг
+        g.fillStyle(0xd8a02e, 0.9);
+        [[16, cy - 26], [112, cy - 34], [104, cy + 30]].forEach(([lx, ly]) => {
+          g.fillEllipse(lx, ly, 22, 13);
+          g.lineStyle(2, 0x8a5a1e); g.lineBetween(lx - 10, ly, lx + 10, ly);
+        });
+        g.fillStyle(c);
+      }
+      g.fillStyle(0xf2e6cf); g.fillRoundedRect(cx - size * 0.28, cy - size * 0.1, size * 0.56, size * 1.05, 8); // ножка
+      g.fillStyle(c); g.fillEllipse(cx, cy - size * 0.15, size * 1.9, size * 1.15); // шляпка
+      g.fillStyle(0xfff4e2, 0.95); // крап
+      [[-0.5, -0.35], [0.1, -0.5], [0.55, -0.25], [-0.15, -0.05]].forEach(([kx, ky]) =>
+        g.fillEllipse(cx + kx * size, cy + ky * size, size * 0.3, size * 0.2));
+      g.fillStyle(shade(c, 1.3), 0.4); g.fillEllipse(cx - size * 0.45, cy - size * 0.4, size * 0.6, size * 0.3);
+      g.lineStyle(4, shade(c, 0.6)); g.strokeEllipse(cx, cy - size * 0.15, size * 1.9, size * 1.15);
+      break;
+    }
+    case 'hw26': { // хеллоуин: тыква, с 4-го уровня — призрачная накидка
+      if (lv >= 3) { g.fillStyle(0xf2f0ff, 0.85); g.fillEllipse(cx, cy + size * 0.2, size * 2.4, size * 1.9); g.fillStyle(c); } // саван
+      g.fillStyle(0x6b8a3a); g.fillRoundedRect(cx - size * 0.14, cy - size * 1.2, size * 0.28, size * 0.42, 5); // хвостик
+      g.fillStyle(c); g.fillEllipse(cx, cy, size * 2, size * 1.6); // тыква
+      g.lineStyle(3, shade(c, 0.7)); // рёбра
+      [-0.55, 0, 0.55].forEach(k => g.strokeEllipse(cx + k * size * 0.5, cy, size * 0.8, size * 1.55));
+      g.fillStyle(shade(c, 1.3), 0.4); g.fillEllipse(cx - size * 0.5, cy - size * 0.45, size * 0.6, size * 0.4);
+      g.lineStyle(4, shade(c, 0.6)); g.strokeEllipse(cx, cy, size * 2, size * 1.6);
+      break;
+    }
     default: { // событийная цепочка: солнце/снежинка-звезда
       g.fillCircle(cx, cy, size);
       g.lineStyle(5, shade(c, 1.3));
