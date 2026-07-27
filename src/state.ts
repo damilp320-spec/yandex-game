@@ -63,6 +63,9 @@ export const S = {
   prestige: 0,              // сколько раз переезжал
   neurons: 0,
   mythics: [] as string[],  // открытые мифики (ключи рецептов) — часть коллекции
+  // «пакт»: свой код и введённый код друга (кланы-лайт без сервера)
+  myCode: '',
+  pact: { code: '', name: '' },
   perks: { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0 } as Record<string, number>,
   // «Лабораторный журнал»: сезонный трек. premium — id сезона, за который куплен.
   pass: { season: '', points: 0, claimed: [] as boolean[], premium: '' },
@@ -129,6 +132,7 @@ function ensureShapes() {
   S.tour ??= { weekend: '', wins: 0, claimed: [] };
   S.skins ??= [];
   S.mythics ??= [];
+  S.pact ??= { code: '', name: '' };
   S.perks = { cooldown: 0, quality: 0, lucky: 0, income: 0, offline: 0, combo: 0, ...(S.perks ?? {}) };
   S.lifetimeCoins = Math.max(S.lifetimeCoins ?? 0, S.coins);
   S.skin ||= 'default';

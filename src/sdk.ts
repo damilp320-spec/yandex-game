@@ -115,6 +115,11 @@ export async function addShortcut(): Promise<boolean> {
   catch { return false; }
 }
 
+/** Уникальный id игрока — сид для его кода «пакта». Вне платформы — null. */
+export const playerId = (): string | null => {
+  try { return player?.getUniqueID?.() ?? null; } catch { return null; }
+};
+
 /** Гость (режим lite) теряет прогресс при смене устройства — ему предлагаем вход. */
 export const isAuthorized = (): boolean => !!player && player.getMode?.() !== 'lite';
 

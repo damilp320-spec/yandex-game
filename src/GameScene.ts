@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS, MYTHICS, MYTHIC_BASE, MYTHIC_LEVEL, isMythic, mythicOf, mythicByPair } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey, PRESTIGE, PERKS, perkCost, PERK_STEP, GEN_MIN_COOLDOWN_MS, MYTHICS, MYTHIC_BASE, MYTHIC_LEVEL, isMythic, mythicOf, mythicByPair, PACT, makeCode, validCode } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, generateMythicSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -141,12 +141,24 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- пассивный доход и кликер ----------
-  /** Множитель дохода от перка престижа — постоянный, поэтому входит и в офлайн. */
-  private perkIncome() { return 1 + PERK_STEP.income * S.perks.income; }
+  /**
+   * Постоянные множители дохода: перк престижа и бонус «пакта». Оба входят и в офлайн,
+   * потому что это не временные бусты, а свойства аккаунта.
+   */
+  private perkIncome() {
+    return 1 + PERK_STEP.income * S.perks.income + (S.pact.code ? PACT.incomeBonus : 0);
+  }
 
-  /** Доход одного существа с учётом мутации дня и перков. */
+  /**
+   * Применить постоянный множитель к доходу существа. Округление ВНИЗ и не ниже базы:
+   * с `ceil` бонус +5% превращал существо с доходом 1 в доход 2, то есть давал +100% на
+   * дешёвых существах — маленькие числа нельзя округлять вверх.
+   */
+  private withPerk(base: number) { return Math.max(base, Math.floor(base * this.perkIncome())); }
+
+  /** Доход одного существа с учётом мутации дня и постоянных бонусов. */
   private itemIncome(chain: number, level: number): number {
-    return Math.ceil(incomeOf(chain, level) * (chain === this.mutChain ? MUTATION_MULT : 1) * this.perkIncome());
+    return this.withPerk(incomeOf(chain, level) * (chain === this.mutChain ? MUTATION_MULT : 1));
   }
 
   /**
@@ -159,7 +171,7 @@ export class GameScene extends Phaser.Scene {
       const it = this.grid[r][c];
       if (it) sum += mutated
         ? this.itemIncome(it.chain, it.level)
-        : Math.ceil(incomeOf(it.chain, it.level) * this.perkIncome());
+        : this.withPerk(incomeOf(it.chain, it.level));
     }
     return sum;
   }
@@ -620,12 +632,14 @@ export class GameScene extends Phaser.Scene {
     // Промокод: живой канал владельца в соцсети — и метка в аналитике, по которой
     // видно, какой именно пост привёл игроков.
     this.addTo(p, ui.button(this, W / 2, H / 2 - 50, 480, 66, t('set.promo'), 0x8f5ad0, () => this.redeemPromo(), 22));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 96, 480, 66,
+      `${t('pact.btn')}${S.pact.code ? ' ✅' : ''}`, 0x2e6d9d, () => { p.destroy(); this.pactPanel(); }, 22));
     // Ярлык вручную: игра предлагает его сама раз в жизни, но кто-то захочет позже.
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 30, 480, 66, t('set.shortcut'), 0x5a48a8, async () => {
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 22, 480, 62, t('set.shortcut'), 0x5a48a8, async () => {
       if (!await sdk.canShortcut()) { failSound(); return; }
       if (await sdk.addShortcut()) { S.shortcutAsked = true; persist(true); tada(); ui.toast(this, W / 2, H / 2, t('ask.shortcutDone')); }
     }, 22));
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 480, 66, t('set.reset'), 0x9d2e4d, () => {
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 182, 480, 62, t('set.reset'), 0x9d2e4d, () => {
       const c = ui.panel(this, t('set.reset'));
       this.addTo(c, this.add.text(W / 2, H / 2 - 120, t('set.resetAsk'), { fontFamily: FONT, fontSize: '28px', color: '#fff', align: 'center' }).setOrigin(0.5));
       this.addTo(c, ui.button(this, W / 2, H / 2 + 20, 460, 74, t('set.resetYes'), 0x9d2e4d, () => {
@@ -845,6 +859,79 @@ export class GameScene extends Phaser.Scene {
     const at = this.findItem(item);
     if (at) this.grid[at[0]][at[1]] = null;
     item.obj.destroy();
+  }
+
+  // ---------- «пакт»: кланы-лайт без сервера ----------
+  /**
+   * Свой код игрока. Сид — уникальный id платформы; вне Яндекса (dev, гость) берём
+   * случайный и запоминаем, чтобы код не менялся между сессиями.
+   */
+  private myCode(): string {
+    if (!S.myCode) {
+      S.myCode = makeCode(sdk.playerId() ?? `local-${Math.random().toString(36).slice(2)}`);
+      persist(true);
+    }
+    return S.myCode;
+  }
+
+  /**
+   * Панель пакта. Здесь важнее всего честность формулировок: без сервера игра не знает,
+   * что делает друг, поэтому она НЕ показывает ни его очков, ни его вклада — только
+   * твою награду и твой бонус, и прямо это объясняет.
+   */
+  private pactPanel() {
+    const code = this.myCode();
+    const p = ui.panel(this, t('pact.title'));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 330, '🤝', { fontSize: '80px' }).setOrigin(0.5));
+
+    // Свой код — крупно: его диктуют голосом и пишут в чат.
+    this.addTo(p, this.add.text(W / 2, H / 2 - 240, t('pact.mine'),
+      { fontFamily: FONT, fontSize: '22px', color: '#c9beee' }).setOrigin(0.5));
+    this.addTo(p, ui.card(this, W / 2, H / 2 - 188, 420, 74, 0x3d2f6e));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 188, code,
+      { fontFamily: FONT, fontSize: '44px', color: '#ffe066', fontStyle: '900' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 100, t('pact.mineHint'),
+      { fontFamily: FONT, fontSize: '19px', color: '#8f86b8', align: 'center', lineSpacing: 6 }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 20, 500, 62, t('pact.copy'), 0x2e7d5b, () => {
+      navigator.clipboard?.writeText(t('pact.share', { code, gems: PACT.gems })).catch(() => {});
+      track('pact_share');
+      ui.toast(this, W / 2, H / 2 - 70, t('common.copied'));
+    }, 21));
+
+    if (S.pact.code) {
+      this.addTo(p, ui.card(this, W / 2, H / 2 + 96, 560, 104, 0x2f4d3a));
+      this.addTo(p, this.add.text(W / 2, H / 2 + 74, t('pact.active', { name: S.pact.name || t('pact.partner') }),
+        { fontFamily: FONT, fontSize: '25px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+      this.addTo(p, this.add.text(W / 2, H / 2 + 116, t('pact.bonus', { pct: Math.round(PACT.incomeBonus * 100) }),
+        { fontFamily: FONT, fontSize: '21px', color: '#7fdc8f' }).setOrigin(0.5));
+    } else {
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 80, 500, 70, t('pact.enter'), 0x8f5ad0, () => this.enterPact(p), 23));
+    }
+    this.addTo(p, this.add.text(W / 2, H / 2 + 250, t('pact.honest'),
+      { fontFamily: FONT, fontSize: '18px', color: '#6b6490', align: 'center', lineSpacing: 6 }).setOrigin(0.5));
+  }
+
+  private enterPact(p: Phaser.GameObjects.Container) {
+    if (S.pact.code) { failSound(); ui.toast(this, W / 2, H / 2, t('pact.already'), '#ff7070'); return; }
+    const raw = window.prompt(t('pact.prompt'), '');
+    if (!raw?.trim()) return;
+    const code = validCode(raw);
+    if (!code) { failSound(); ui.toast(this, W / 2, H / 2, t('pact.bad'), '#ff7070'); return; }
+    if (code === this.myCode()) { failSound(); ui.toast(this, W / 2, H / 2, t('pact.self'), '#ff9d70'); return; }
+    const name = (window.prompt(t('pact.namePrompt'), '') ?? '').trim().slice(0, 16);
+    S.pact = { code, name };
+    S.gems += PACT.gems;
+    this.giveEgg(PACT.egg);
+    tada(); buzz(BUZZ.claim);
+    track('pact_join');
+    this.refreshHud(); persist(true);
+    p.destroy();
+    const done = ui.panel(this, t('pact.done'));
+    this.addTo(done, this.add.text(W / 2, H / 2 - 200, '🤝', { fontSize: '110px' }).setOrigin(0.5));
+    this.addTo(done, this.add.text(W / 2, H / 2 - 40, t('pact.active', { name: name || t('pact.partner') }),
+      { fontFamily: FONT, fontSize: '28px', color: '#fff', fontStyle: '700', align: 'center' }).setOrigin(0.5));
+    this.addTo(done, this.add.text(W / 2, H / 2 + 60, t('pact.reward', { gems: PACT.gems, pct: Math.round(PACT.incomeBonus * 100) }),
+      { fontFamily: FONT, fontSize: '25px', color: '#ffe066', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
   }
 
   // ---------- мифики: слияние двух легендарок ----------
@@ -1876,6 +1963,8 @@ export class GameScene extends Phaser.Scene {
     });
     if (S.battle.side >= 0) {
       this.addTo(p, this.add.text(W / 2, H / 2 + 80, t('wb.points', { n: S.battle.points }), { fontFamily: FONT, fontSize: '30px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 250, 480, 62, t('pact.btn'), 0x2e6d9d,
+        () => { p.destroy(); this.pactPanel(); }, 21));
       this.addTo(p, ui.button(this, W / 2, H / 2 + 170, 480, 66, t('wb.invite'), 0x2e7d5b, () => {
         navigator.clipboard?.writeText(t('wb.share', { name: this.cname(S.battle.side, 5), n: S.battle.points })).catch(() => {});
         track('battle_share');

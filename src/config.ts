@@ -210,6 +210,51 @@ export const PERK_STEP = {
 };
 export const GEN_MIN_COOLDOWN_MS = 15_000;
 
+/**
+ * «Пакт» — кланы-лайт без бэкенда. У каждого игрока есть свой короткий код; ввёл код
+ * друга — получил награду и небольшой постоянный бонус к доходу.
+ *
+ * ЧЕСТНОСТЬ ВАЖНЕЕ ФИЧИ. Изначальный план предлагал «общие очки с другом»: код как сид,
+ * а вклад друга — локальная симуляция. Так делать нельзя: игра показывала бы выдуманную
+ * активность живого человека как настоящую. Без сервера мы физически не знаем, что
+ * делает друг, поэтому и не притворяемся: награду получает тот, кто ввёл код, и панель
+ * говорит об этом прямым текстом. Виральность от этого не страдает — наоборот, код
+ * выгодно раздавать, ведь награду получает каждый, кто его введёт.
+ *
+ * Бонус мал (+5% дохода) и не даёт силы в бою: симуляция показала, что доход вообще не
+ * узкое место прогресса, поэтому «пакт» — это тёплый жест и повод позвать друга, а не
+ * преимущество.
+ */
+export const PACT = { gems: 30, egg: 'rare' as EggType, incomeBonus: 0.05 };
+
+// Алфавит без похожих букв (I/O/0/1) — код диктуют голосом и пишут в чат.
+const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+const codeHash = (seed: string) => [...seed].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+
+/** Код игрока: четыре буквы от сида + две цифры контрольной суммы. */
+export function makeCode(seed: string): string {
+  let h = codeHash(seed);
+  let letters = '';
+  for (let i = 0; i < 4; i++) { letters += CODE_LETTERS[h % CODE_LETTERS.length]; h = Math.floor(h / CODE_LETTERS.length) + 977; }
+  return letters + codeChecksum(letters);
+}
+
+const codeChecksum = (letters: string) =>
+  String([...letters].reduce((a, c) => a + CODE_LETTERS.indexOf(c) * 7 + 13, 0) % 100).padStart(2, '0');
+
+/**
+ * Проверка кода: формат + контрольная сумма. Сумма нужна, чтобы «набрать что попало»
+ * не срабатывало — иначе награда за код превратилась бы в награду за ввод любых букв.
+ */
+export function validCode(raw: string): string | null {
+  const code = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/^[A-Z]{4}\d{2}$/.test(code)) return null;
+  const letters = code.slice(0, 4);
+  if ([...letters].some(c => !CODE_LETTERS.includes(c))) return null;
+  return codeChecksum(letters) === code.slice(4) ? code : null;
+}
+
 export const PRICES = {
   chestGems: 25,
   boostGems: 20,
