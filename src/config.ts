@@ -68,6 +68,33 @@ export const INTERSTITIAL = { minGapMs: 180_000, sessionWarmupMs: 180_000, every
 // они слиты в одну кнопку внизу. 25 с ≈ та же суммарная выдача, что 4 × 90 с.
 export const GEN = { cooldownMs: 25_000 };
 
+/**
+ * Инкубатор: «встреча по расписанию» — сильнейший крючок возврата в казуалках.
+ * Яйцо выдаётся за бой или новую лигу и вылупляется через часы, так что игрок
+ * уходит из сессии с конкретной причиной вернуться, а не с абстрактным «потом».
+ *
+ * Уровень — индекс в цепочке (level 4 = эпический). Секрет — шанс «67» из яйца.
+ */
+export const EGGS = {
+  common: { hours: 2, level: 2, gems: 0, secret: 0, color: 0xb8c4d8 },
+  rare: { hours: 8, level: 3, gems: 10, secret: 0, color: 0x7fe0d8 },
+  gold: { hours: 24, level: 4, gems: 25, secret: SECRET_CHANCE, color: 0xffd04a },
+};
+export type EggType = keyof typeof EGGS;
+
+/**
+ * Ускорение яйца: реклама снимает час (не больше трёх раз в день), кристаллы —
+ * по получасу за штуку. Бесплатный путь — просто подождать, поэтому ускорение
+ * продаёт время, а не силу. Очередь из двух яиц нужна, чтобы награда за бой
+ * никогда не пропадала: занятый инкубатор её не съедает, а откладывает.
+ */
+export const INCUBATOR = {
+  adMinutes: 60, adPerDay: 3,
+  gemMinutes: 30, gemCost: 1,
+  winEvery: 5,          // каждая N-я победа на арене даёт обычное яйцо
+  queueMax: 2,
+};
+
 export const PRICES = {
   chestGems: 25,
   boostGems: 20,

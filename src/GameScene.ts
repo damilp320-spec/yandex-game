@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -28,6 +28,8 @@ export class GameScene extends Phaser.Scene {
   private gemsText!: Phaser.GameObjects.Text;
   private incomeText!: Phaser.GameObjects.Text;
   private spawnLabel?: Phaser.GameObjects.Text;
+  private eggLabel?: Phaser.GameObjects.Text;
+  private eggBadge?: Phaser.GameObjects.Arc;
   private comboCount = 0;
   private comboLast = 0;
   private golden?: Phaser.GameObjects.Image;
@@ -106,7 +108,7 @@ export class GameScene extends Phaser.Scene {
     this.syncBattleWeek();
     this.time.addEvent({ delay: INCOME.periodMs, loop: true, callback: () => this.incomeTick() });
     this.time.addEvent({ delay: GOLDEN.intervalMs, loop: true, callback: () => this.spawnGolden() });
-    this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tickSpawnButton() });
+    this.time.addEvent({ delay: 1000, loop: true, callback: () => { this.tickSpawnButton(); this.tickEgg(); } });
     this.time.addEvent({ delay: 10_000, loop: true, callback: () => { this.persistBoard(); sdk.submitScore('weekly_merges', S.score); } });
   }
 
@@ -460,9 +462,15 @@ export class GameScene extends Phaser.Scene {
     this.incomeText = this.add.text(408, 76, '', { fontFamily: FONT, fontSize: '19px', color: '#7fdc8f', fontStyle: '700' }).setOrigin(1, 0.5);
     this.gemsText = ui.pill(this, 444, 76, 252, '💎', 0xc9a6ff);
 
+    // Строка статусов: инкубатор, локация, событие. Тапают их редко, поэтому верх
+    // экрана им подходит — а яйцо обязано быть на виду: это причина вернуться.
+    const wide = !this.ev;
+    const eggBtn = ui.button(this, wide ? 180 : 118, 126, wide ? 340 : 216, 44, '', 0x5a48a8, () => this.incubatorPanel(), 18);
+    this.eggLabel = eggBtn.list[1] as Phaser.GameObjects.Text;
+    this.eggBadge = this.add.circle((wide ? 340 : 216) + (wide ? 12 : 4), 108, 9, 0xff5050).setDepth(2);
+    ui.button(this, wide ? 540 : 350, 126, wide ? 340 : 224, 44, `🗺️ ${t(`zone.${ZONES[S.zone].id}`)}`, 0x2e6d9d, () => this.zonesPanel(), 18);
     if (this.ev)
-      ui.button(this, 175, 126, 310, 44, `${this.ev.emoji} ${t(`event.${this.ev.id}`).split(' ')[0]} · ${daysLeft(this.ev)}${t('hud.day')}`, 0xa8542e, () => this.eventPanel(), 18);
-    ui.button(this, 520, 126, 320, 44, `🗺️ ${t(`zone.${ZONES[S.zone].id}`)}`, 0x2e6d9d, () => this.zonesPanel(), 18);
+      ui.button(this, 582, 126, 224, 44, `${this.ev.emoji} ${t(`event.${this.ev.id}`).split(' ')[0]} · ${daysLeft(this.ev)}${t('hud.day')}`, 0xa8542e, () => this.eventPanel(), 18);
 
     // Действия основного цикла — по краям, чтобы центр остался под главную кнопку.
     const spawnBtn = ui.button(this, 148, 1124, 268, 62, '', 0x5a48a8, () => this.trySpawn(), 21);
@@ -619,6 +627,7 @@ export class GameScene extends Phaser.Scene {
     const boost = Date.now() < S.boostUntil ? ` ×${S.boostMult}` : '';
     this.incomeText.setText(`+${this.totalIncome()}/5${t('hud.sec')}${boost}`);
     this.tickSpawnButton(); // подпись кнопки зависит от кулдауна, а не только от цены
+    this.tickEgg();
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
     this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
@@ -657,12 +666,17 @@ export class GameScene extends Phaser.Scene {
     return true;
   }
 
-  private spawnReward(level: number): boolean {
+  private spawnReward(level: number): boolean { return !!this.spawnRewardItem(level); }
+
+  /** То же, но возвращает, кто именно родился — нужно для сообщений («вылупился X»). */
+  private spawnRewardItem(level: number): { chain: number; level: number } | null {
     const cell = this.findEmpty();
-    if (!cell) return false;
-    this.spawnItem(Phaser.Math.RND.pick(ZONES[S.zone].chains) as number, Math.min(level, 5), ...cell);
+    if (!cell) return null;
+    const chain = Phaser.Math.RND.pick(ZONES[S.zone].chains) as number;
+    const lv = Math.min(level, 5);
+    this.spawnItem(chain, lv, ...cell);
     this.persistBoard();
-    return true;
+    return { chain, level: lv };
   }
 
   // ---------- заказы ----------
@@ -828,7 +842,7 @@ export class GameScene extends Phaser.Scene {
       { fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
     ev.milestones.forEach((m, i) => {
       const y = H / 2 - 180 + i * 110;
-      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && t('event.chest')].filter(Boolean).join(' + ');
+      const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && t('event.chest'), m.egg && `🥚 ${t(`egg.${m.egg}`)}`].filter(Boolean).join(' + ');
       this.addTo(p, this.add.text(W / 2 - 280, y, `${Math.min(S.event.points, m.points)}/${m.points} ${ev.emoji}\n${rw}`, { fontSize: '25px', color: '#fff' }));
       if (S.event.claimed[i])
         this.addTo(p, this.add.text(W / 2 + 210, y + 24, '✅', { fontSize: '38px' }).setOrigin(0.5));
@@ -836,6 +850,7 @@ export class GameScene extends Phaser.Scene {
         this.addTo(p, ui.button(this, W / 2 + 210, y + 28, 170, 58, t('common.claim'), 0x2e7d5b, () => {
           S.event.claimed[i] = true; S.coins += m.coins ?? 0; S.gems += m.gems ?? 0;
           if (m.chest) this.spawnReward(4);
+          if (m.egg) this.giveEgg(m.egg);
           jingleFanfare(); track('event_milestone', { points: m.points });
           this.refreshHud(); persist(true); p.destroy(); this.eventPanel();
         }));
@@ -1006,6 +1021,7 @@ export class GameScene extends Phaser.Scene {
     S.battles++;
     let coins = 0;
     if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
+    if (win && S.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
     sdk.submitScore('cups', S.cups);
     track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
     persist(true); this.refreshHud();
@@ -1017,6 +1033,7 @@ export class GameScene extends Phaser.Scene {
     if (win) buzz(BUZZ.win);
     if (promoted) {
       jingleFanfare(); track('league_up', { league: leagueNow.key });
+      this.giveEgg('rare'); // новая лига — редкое яйцо: награда за рост, а не за гринд
       this.addTo(p, this.add.text(W / 2, H / 2 - 330, t('arena.leagueUp', { name: t(`league.${leagueNow.key}`) }),
         { fontFamily: FONT, fontSize: '30px', color: '#ffe066', fontStyle: '800', align: 'center' }).setOrigin(0.5));
     }
@@ -1154,6 +1171,149 @@ export class GameScene extends Phaser.Scene {
       }
       p.destroy();
     }));
+  }
+
+  // ---------- инкубатор: причина вернуться через два часа ----------
+  /** Сколько осталось ждать (мс). ≤0 — яйцо готово. */
+  private eggLeft(): number {
+    const e = S.egg;
+    return e ? e.startedAt + EGGS[e.type].hours * 3_600_000 - Date.now() : 0;
+  }
+
+  /** «1:42» для часов и «42 м» для минут — на чипе нужна короткая форма. */
+  private fmtLeft(ms: number): string {
+    const min = Math.max(0, Math.ceil(ms / 60_000));
+    return min >= 60 ? `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}` : `${min}${t('hud.min')}`;
+  }
+
+  private tickEgg() {
+    if (!this.eggLabel) return;
+    const e = S.egg;
+    const left = this.eggLeft();
+    const ready = !!e && left <= 0;
+    this.eggLabel.setText(!e ? t('egg.chipNone') : ready ? t('egg.chipReady') : `🥚 ${this.fmtLeft(left)}`);
+    this.eggLabel.setColor(ready ? '#7fdc8f' : '#ffffff');
+    this.eggBadge?.setVisible(ready);
+  }
+
+  /**
+   * Выдать яйцо. Занятый инкубатор награду не съедает: она уходит в очередь, а если
+   * и очередь полна — превращается в кристаллы. Игрок никогда не остаётся ни с чем.
+   */
+  private giveEgg(type: EggType) {
+    const name = t(`egg.${type}`);
+    if (!S.egg) {
+      S.egg = { type, startedAt: Date.now(), ads: 0, adsDay: today() };
+      ui.toast(this, W / 2, 176, t('egg.got', { name }));
+    } else if (S.eggQueue.length < INCUBATOR.queueMax) {
+      S.eggQueue.push(type);
+      ui.toast(this, W / 2, 176, t('egg.gotQueued', { name }));
+    } else {
+      const gems = EGGS[type].gems || 5;
+      S.gems += gems;
+      ui.toast(this, W / 2, 176, t('egg.gems', { n: gems }));
+    }
+    jingleDiscovery(); buzz(BUZZ.claim);
+    track('egg_got', { type });
+    this.tickEgg(); this.refreshHud(); persist(true);
+  }
+
+  private hatchEgg() {
+    const e = S.egg;
+    if (!e || this.eggLeft() > 0) return;
+    const cfg = EGGS[e.type];
+    S.egg = null; S.eggsHatched++;
+    const secret = cfg.secret > 0 && Math.random() < cfg.secret;
+    const born = secret ? (this.spawnSecret() ? { chain: SECRET_CHAIN, level: 0 } : null) : this.spawnRewardItem(cfg.level);
+    if (cfg.gems) S.gems += cfg.gems;
+    if (born) {
+      ui.toast(this, W / 2, GRID.y + 80, secret ? t('chest.secret') : t('egg.hatched', { name: this.cname(born.chain, born.level) }));
+    } else {
+      const coins = 200 * (cfg.level + 1);
+      S.coins += coins;
+      ui.toast(this, W / 2, GRID.y + 80, t('egg.hatchedFull', { n: coins }));
+    }
+    if (cfg.gems) ui.toast(this, W / 2, GRID.y + 150, t('egg.gems', { n: cfg.gems }), '#c9a6ff');
+    // Следующее яйцо встаёт в инкубатор само: возвращаться ради нажатия кнопки — плохой крючок.
+    const next = S.eggQueue.shift();
+    if (next) S.egg = { type: next, startedAt: Date.now(), ads: 0, adsDay: today() };
+    tada(); buzz(BUZZ.win);
+    track('egg_hatched', { type: e.type });
+    this.tickEgg(); this.refreshHud(); persist(true);
+  }
+
+  private incubatorPanel() {
+    const p = ui.panel(this, t('egg.title'));
+    const e = S.egg;
+    if (!e) {
+      this.addTo(p, this.add.text(W / 2, H / 2 - 260, '🥚', { fontSize: '110px' }).setOrigin(0.5).setAlpha(0.35));
+      this.addTo(p, this.add.text(W / 2, H / 2 - 40, t('egg.none', { n: INCUBATOR.winEvery }),
+        { fontFamily: FONT, fontSize: '25px', color: '#fff', align: 'center', lineSpacing: 10 }).setOrigin(0.5));
+      return;
+    }
+    const cfg = EGGS[e.type];
+    const left = this.eggLeft();
+    const ready = left <= 0;
+    const col = `#${cfg.color.toString(16).padStart(6, '0')}`;
+
+    // Свечение в цвет типа: эмодзи-яйцо одинаковое, а редкость должна читаться сразу.
+    const glow = this.add.graphics();
+    glow.fillStyle(cfg.color, 0.22); glow.fillCircle(W / 2, H / 2 - 290, 96);
+    glow.fillStyle(cfg.color, 0.14); glow.fillCircle(W / 2, H / 2 - 290, 124);
+    this.addTo(p, glow);
+    const icon = this.add.text(W / 2, H / 2 - 290, '🥚', { fontSize: '130px' }).setOrigin(0.5);
+    this.addTo(p, icon);
+    // Готовое яйцо трясётся заметно сильнее — это видно краем глаза.
+    this.tweens.add({
+      targets: icon, angle: ready ? { from: -14, to: 14 } : { from: -4, to: 4 },
+      yoyo: true, repeat: -1, duration: ready ? 200 : 900,
+    });
+    this.addTo(p, this.add.text(W / 2, H / 2 - 180, t(`egg.${e.type}`).toUpperCase(),
+      { fontFamily: FONT, fontSize: '26px', color: col, fontStyle: '800' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 138,
+      t('egg.reward', { lvl: cfg.level + 1, gems: cfg.gems ? t('egg.rewardGems', { n: cfg.gems }) : '' }),
+      { fontFamily: FONT, fontSize: '22px', color: '#c9beee' }).setOrigin(0.5));
+
+    // Полоса прогресса: видно, что ожидание конечно.
+    const total = cfg.hours * 3_600_000;
+    const done = Math.max(0.02, Math.min(1, 1 - left / total));
+    const g = this.add.graphics();
+    g.fillStyle(0x161028, 0.9); g.fillRoundedRect(W / 2 - 260, H / 2 - 96, 520, 26, 13);
+    g.fillStyle(cfg.color, 1); g.fillRoundedRect(W / 2 - 257, H / 2 - 93, 514 * done, 20, 10);
+    this.addTo(p, g);
+    this.addTo(p, this.add.text(W / 2, H / 2 - 40, ready ? t('egg.ready') : t('egg.hatchIn', { time: this.fmtLeft(left) }),
+      { fontFamily: FONT, fontSize: '30px', color: ready ? '#7fdc8f' : '#fff', fontStyle: '700' }).setOrigin(0.5));
+
+    if (ready) {
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 60, 480, 84, t('egg.hatch'), 0x2e7d5b, () => {
+        p.destroy(); this.hatchEgg();
+      }, 30));
+    } else {
+      // Ускорение продаёт время, а не силу: подождать можно бесплатно.
+      if (e.adsDay !== today()) { e.ads = 0; e.adsDay = today(); }
+      const capped = e.ads >= INCUBATOR.adPerDay;
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 40, 500, 74,
+        capped ? t('egg.adCap') : t('egg.ad', { n: INCUBATOR.adMinutes }), capped ? 0x3a3a55 : 0x2e7d5b, () => {
+          if (capped) { failSound(); return; }
+          sdk.showRewarded(() => {
+            e.ads++;
+            e.startedAt -= INCUBATOR.adMinutes * 60_000;
+            coinSound(); track('egg_ad');
+            this.tickEgg(); persist(true); p.destroy(); this.incubatorPanel();
+          });
+        }, 23));
+      this.addTo(p, ui.button(this, W / 2, H / 2 + 140, 500, 70,
+        t('egg.gem', { min: INCUBATOR.gemMinutes, cost: INCUBATOR.gemCost }), 0x8f5ad0, () => {
+          if (S.gems < INCUBATOR.gemCost) { failSound(); ui.toast(this, W / 2, H / 2 + 140, t('common.notEnoughGems'), '#ff7070'); return; }
+          S.gems -= INCUBATOR.gemCost;
+          e.startedAt -= INCUBATOR.gemMinutes * 60_000;
+          coinSound(); track('egg_gems');
+          this.tickEgg(); this.refreshHud(); persist(true); p.destroy(); this.incubatorPanel();
+        }, 23));
+    }
+    if (S.eggQueue.length)
+      this.addTo(p, this.add.text(W / 2, H / 2 + 250, t('egg.queue', { n: S.eggQueue.length }),
+        { fontFamily: FONT, fontSize: '22px', color: '#8f86b8' }).setOrigin(0.5));
   }
 
   // ---------- платформенные предложения: оценка, облако, ярлык ----------

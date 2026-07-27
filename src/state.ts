@@ -1,5 +1,5 @@
 // Центральное состояние игры + сериализация. Единственный источник правды для сейва.
-import { CHAINS, ZONES } from './config';
+import { CHAINS, ZONES, EggType } from './config';
 import * as sdk from './sdk';
 import { Lang, setLang } from './i18n';
 
@@ -56,6 +56,10 @@ export const S = {
   score: 0,
   battles: 0,               // боёв всего — якорь для interstitial
   sold: 0,                  // продано существ (для аналитики и квестов)
+  // инкубатор: одно яйцо «в работе» + очередь, чтобы награды не пропадали
+  egg: null as { type: EggType; startedAt: number; ads: number; adsDay: string } | null,
+  eggQueue: [] as EggType[],
+  eggsHatched: 0,
   // платформенные предложения: оценка (рейтинг = ранжирование), ярлык, вход в аккаунт
   reviewAsked: 0,           // когда предлагали оценить (0 = никогда)
   reviewDone: false,        // отзыв отправлен — больше не предлагаем
@@ -144,7 +148,8 @@ export function resetProgress() {
     spawnBought: 0, incomeRate: 0, boostUntil: 0, boostMult: 1, customNames: {},
     battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, wins: 0,
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
-    starterOffered: false, tips: { income: false, tap: false, arena: false, card: false }, ...keep,
+    starterOffered: false, tips: { income: false, tap: false, arena: false, card: false },
+    egg: null, eggQueue: [], eggsHatched: 0, ...keep,
   });
   ensureShapes();
   persist(true);

@@ -12,8 +12,10 @@
 //   покупка существ пока хватает монет с запасом, жадные слияния,
 //   продажа «одиночек» когда поле почти забито (заказов больше нет),
 //   BATTLES_PER_SESSION боёв арены за сессию с ростом кубков, милстоунами и сундуками,
+//   инкубатор: яйцо за каждую INCUBATOR.winEvery-ю победу и за новую лигу, вылупление
+//   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
@@ -62,6 +64,13 @@ class Sim {
   wins = 0;
   barracks = 0;
   claimed: boolean[] = ARENA_MILESTONES.map(() => false);
+  // Инкубатор: часы идут и в офлайне, поэтому нужен модельный «сейчас» в минутах.
+  now = 0;
+  egg: { type: EggType; due: number } | null = null;
+  eggQueue: EggType[] = [];
+  eggsHatched = 0;
+  eggCreatures = 0;   // сколько существ реально попало на поле из яиц
+  eggCoins = 0;       // и сколько монет вместо них, когда поле было забито
 
   get chains() { return ZONES[this.zone].chains; }
 
@@ -159,7 +168,10 @@ class Sim {
       const power = teamPower(en.team, false) * en.factor;
       const win = simulateBattle(S.team, en.team, 1, en.factor);
       if (win) { this.coins += 150 + Math.floor(power / 5); this.wins++; }
+      if (win && this.wins % INCUBATOR.winEvery === 0) this.giveEgg('common');
+      const leagueBefore = leagueOf(this.cups);
       this.cups = Math.max(0, this.cups + cupsDelta(win, power));
+      if (leagueOf(this.cups).cups > leagueBefore.cups) this.giveEgg('rare');
       this.battles++;
       ARENA_MILESTONES.forEach((m, idx) => {
         if (this.claimed[idx] || this.cups < m.cups) return;
@@ -181,6 +193,33 @@ class Sim {
     }
   }
 
+  giveEgg(type: EggType) {
+    if (!this.egg) this.egg = { type, due: this.now + EGGS[type].hours * 60 };
+    else if (this.eggQueue.length < INCUBATOR.queueMax) this.eggQueue.push(type);
+    // Очередь полна — в игре награда превращается в кристаллы; на монеты не влияет.
+  }
+
+  /**
+   * Ход времени: яйца вылупляются и в офлайне (иначе крючок наказывал бы за сон).
+   * Ускорения рекламой/кристаллами не моделируем — считаем «ленивого» игрока.
+   */
+  tickClock(minutes: number) {
+    this.now += minutes;
+    while (this.egg && this.now >= this.egg.due) {
+      const cfg = EGGS[this.egg.type];
+      this.eggsHatched++;
+      if (this.board.length < this.capacity) {
+        this.board.push({ chain: this.chains[Math.floor(Math.random() * this.chains.length)], level: cfg.level });
+        this.eggCreatures++;
+      } else {
+        this.coins += 200 * (cfg.level + 1);
+        this.eggCoins += 200 * (cfg.level + 1);
+      }
+      const next = this.eggQueue.shift();
+      this.egg = next ? { type: next, due: this.now + EGGS[next].hours * 60 } : null;
+    }
+  }
+
   tapMinute() {
     // Игрок тапает самое доходное существо: gain = ceil(income/2) × комбо.
     if (!this.board.length) return;
@@ -191,6 +230,7 @@ class Sim {
   }
 
   activeMinute() {
+    this.tickClock(1);
     this.coins += this.income * (60_000 / INCOME.periodMs);
     this.tapMinute();
     this.collectFree(60);
@@ -241,6 +281,8 @@ class Sim {
     const tier = INCOME.offlineFree;
     const capped = Math.min(hours, tier.hours);
     this.coins += Math.floor(this.income * tier.rate * (capped * 3_600_000 / INCOME.periodMs));
+    this.tickClock(hours * 60); // яйца ждать не перестают
+
   }
 }
 
@@ -292,6 +334,8 @@ console.log(`  • цена существа vs доход: ${affordable ? 'OK' 
   `(цена ${fmt(last.cost)}; доход ${fmt(last.income)}/мин; на руках ${fmt(sim.coins)})`);
 console.log(`  • первая легендарка (6 ур.): ${legendaryDay ? `день ${legendaryDay}` : 'не достигнута за 14 дней'}`);
 console.log(`  • переходы по локациям: ${zoneDays.length ? zoneDays.join(', ') : 'ни одной новой за 14 дней — проверь цены разблокировки'}`);
+console.log(`  • инкубатор: ${sim.eggsHatched} яиц за ${DAYS} дн. — ${sim.eggCreatures} существ на поле, ` +
+  `${fmt(sim.eggCoins)}🪙 компенсации (поле было забито)`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +
   `${last.tapShare > 5 ? '— ПЛОХО: тапы обесценивают пассивный доход и офлайн' : '— OK'}`);
 
