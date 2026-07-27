@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, LEAGUES, SEASON, seasonId, FRAMES, frameByKey, frameRank, PASS, PASS_TRACK, PassReward, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode, TOURNAMENT, weekendId, SKINS, skinByKey } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -245,14 +245,15 @@ export class GameScene extends Phaser.Scene {
   // ---------- поле ----------
   private drawBoard() {
     const { cols, rows, cell, x, y } = GRID;
+    const sk = skinByKey(S.skin); // косметика: цвета сетки и рамки
     const g = this.add.graphics().setDepth(-5);
     g.fillStyle(0x000000, 0.35); g.fillRoundedRect(x - 8 + 3, y - 8 + 6, cols * cell + 16, rows * cell + 16, 22); // тень
-    g.fillGradientStyle(0x322558, 0x322558, 0x241b42, 0x241b42, 1);
+    g.fillGradientStyle(sk.cellA, sk.cellA, sk.cellB, sk.cellB, 1);
     g.fillRoundedRect(x - 8, y - 8, cols * cell + 16, rows * cell + 16, 22);
-    g.lineStyle(3, 0x5a48a8, 0.9); g.strokeRoundedRect(x - 8, y - 8, cols * cell + 16, rows * cell + 16, 22);
+    g.lineStyle(3, sk.frame, 0.9); g.strokeRoundedRect(x - 8, y - 8, cols * cell + 16, rows * cell + 16, 22);
     for (let r = 0; r < rows; r++)
       for (let c = 0; c < cols; c++) {
-        g.fillStyle((r + c) % 2 ? 0x3a2f66 : 0x352a5e, 1); // мягкая «шахматка»
+        g.fillStyle((r + c) % 2 ? sk.cellA : sk.cellB, 1); // мягкая «шахматка»
         g.fillRoundedRect(x + c * cell + 3, y + r * cell + 3, cell - 6, cell - 6, 12);
       }
     if (!S.rowUnlocked) this.drawLockedRow();
@@ -384,8 +385,9 @@ export class GameScene extends Phaser.Scene {
       if (!it || it === item || it.chain !== item.chain || it.level !== item.level) continue;
       const { x, y } = this.cellXY(r, c);
       const s = GRID.cell / 2 - 5;
-      g.fillStyle(0xffe066, 0.16); g.fillRoundedRect(x - s, y - s, s * 2, s * 2, 12);
-      g.lineStyle(4, 0xffe066, 0.95); g.strokeRoundedRect(x - s, y - s, s * 2, s * 2, 12);
+      const accent = skinByKey(S.skin).accent;
+      g.fillStyle(accent, 0.16); g.fillRoundedRect(x - s, y - s, s * 2, s * 2, 12);
+      g.lineStyle(4, accent, 0.95); g.strokeRoundedRect(x - s, y - s, s * 2, s * 2, 12);
       found = true;
     }
     if (!found) { g.destroy(); return; }
@@ -590,6 +592,7 @@ export class GameScene extends Phaser.Scene {
         this.scene.restart(); // перерисовать всю сцену на новом языке
       }, 22));
     });
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 116, 480, 62, t('skin.btn'), 0x2e6d9d, () => { p.destroy(); this.skinPanel(); }, 22));
     // Промокод: живой канал владельца в соцсети — и метка в аналитике, по которой
     // видно, какой именно пост привёл игроков.
     this.addTo(p, ui.button(this, W / 2, H / 2 - 50, 480, 66, t('set.promo'), 0x8f5ad0, () => this.redeemPromo(), 22));
@@ -1137,6 +1140,50 @@ export class GameScene extends Phaser.Scene {
     navigator.clipboard?.writeText(t(key, { n: achValue(a) })).catch(() => {});
     track('ach_share', { metric: a.metric });
     ui.toast(this, W / 2, H / 2, t('common.copied'));
+  }
+
+  // ---------- косметика: скины поля ----------
+  /**
+   * Скины меняют только цвета поля — синк кристаллов без влияния на бой. Один скин
+   * не продаётся, а выдаётся за трёх боссов: должно оставаться что-то, чем хвастаются.
+   */
+  private skinPanel() {
+    const p = ui.panel(this, t('skin.title'), () => this.settingsPanel());
+    SKINS.forEach((sk, i) => {
+      const y = H / 2 - 330 + i * 150;
+      const owned = sk.key === 'default' || S.skins.includes(sk.key);
+      const earned = sk.earn === 'bosses3' && S.bossBeaten.filter(Boolean).length >= 3;
+      const has = owned || earned;
+      const on = S.skin === sk.key;
+      // Превью: та же «шахматка», что на поле, только маленькая.
+      const g = this.add.graphics();
+      g.fillStyle(sk.cellB, 1); g.fillRoundedRect(W / 2 - 296, y - 52, 150, 104, 12);
+      for (let k = 0; k < 6; k++) {
+        g.fillStyle(k % 2 ? sk.cellA : sk.cellB, 1);
+        g.fillRoundedRect(W / 2 - 290 + (k % 3) * 47, y - 46 + Math.floor(k / 3) * 47, 41, 41, 8);
+      }
+      g.lineStyle(3, sk.frame, 0.9); g.strokeRoundedRect(W / 2 - 296, y - 52, 150, 104, 12);
+      g.fillStyle(sk.accent, 0.9); g.fillCircle(W / 2 - 160, y - 40, 7);
+      this.addTo(p, g);
+      this.addTo(p, this.add.text(W / 2 - 126, y - 22, t(`skin.${sk.key}`),
+        { fontFamily: FONT, fontSize: '25px', color: '#fff', fontStyle: '700' }).setOrigin(0, 0.5));
+      const label = on ? t('skin.on') : has ? t('skin.use') : sk.earn ? t('skin.earn') : t('skin.buy', { gems: sk.gems });
+      this.addTo(p, ui.button(this, W / 2 + 150, y + 18, 280, 58, label,
+        on ? 0x3a3a55 : has ? 0x2e7d5b : sk.earn ? 0x3a3a55 : 0x8f5ad0, () => {
+          if (on) return;
+          if (has) {
+            S.skin = sk.key; clickSound(1); persist(true);
+            track('skin_equip', { skin: sk.key });
+            this.scene.restart(); // поле перерисовывается целиком
+            return;
+          }
+          if (sk.earn) { failSound(); return; }
+          if (S.gems < sk.gems) { failSound(); ui.toast(this, W / 2, y, t('common.notEnoughGems'), '#ff7070'); return; }
+          S.gems -= sk.gems; S.skins.push(sk.key); S.skin = sk.key;
+          tada(); track('skin_buy', { skin: sk.key });
+          persist(true); this.scene.restart();
+        }, 19));
+    });
   }
 
   // ---------- турнир выходных ----------

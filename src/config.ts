@@ -144,6 +144,24 @@ export function weekendId(d = new Date()): string {
   return sat.toISOString().slice(0, 10);
 }
 
+/**
+ * Скины поля: единственная косметика за кристаллы. Меняют цвет сетки, рамки и
+ * подсветки пары — то, что игрок видит всю сессию. Силы не дают вообще, поэтому
+ * это чистый синк валюты (принцип «платное не даёт преимущества в бою»).
+ *
+ * `gems: 0` + `earn` — скин нельзя купить, он выдаётся за достижение: должно
+ * оставаться что-то, чем хвастаются, а не что покупают.
+ */
+export interface Skin { key: string; gems: number; cellA: number; cellB: number; frame: number; accent: number; earn?: 'bosses3' }
+export const SKINS: Skin[] = [
+  { key: 'default', gems: 0, cellA: 0x3a2f66, cellB: 0x352a5e, frame: 0x5a48a8, accent: 0xffe066 },
+  { key: 'neon', gems: 200, cellA: 0x1b3a52, cellB: 0x16304a, frame: 0x2fb7d8, accent: 0x4ff0ff },
+  { key: 'candy', gems: 250, cellA: 0x5a2f52, cellB: 0x52294a, frame: 0xd85aa8, accent: 0xffb0e0 },
+  { key: 'gold', gems: 400, cellA: 0x4a3a1e, cellB: 0x42331a, frame: 0xffd04a, accent: 0xfff0a0 },
+  { key: 'lab', gems: 0, cellA: 0x1e4a3a, cellB: 0x1a4234, frame: 0x4fd8a0, accent: 0x8fffd0, earn: 'bosses3' },
+];
+export const skinByKey = (key: string) => SKINS.find(s => s.key === key) ?? SKINS[0];
+
 export const PRICES = {
   chestGems: 25,
   boostGems: 20,
