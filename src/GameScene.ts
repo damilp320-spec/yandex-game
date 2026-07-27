@@ -11,6 +11,7 @@ import * as sdk from './sdk';
 import * as ui from './ui';
 import { jingleMerge, jingleOrder, jingleDiscovery, jingleFanfare, coinSound, clickSound, failSound, tada, registerSoundScene, setMuted, isMuted } from './audio';
 import { openShop, rollChest, ShopApi } from './shop';
+import { buzz, BUZZ } from './haptics';
 import { t, creatureName, rarityName, nicks, LANGS, Lang, getLang, setLang } from './i18n';
 
 interface Item { chain: number; level: number; obj: Phaser.GameObjects.Container }
@@ -20,6 +21,7 @@ const HOLD_MS = 350;
 
 export class GameScene extends Phaser.Scene {
   private static popupsShown = false; // стрик/офлайн показываем раз за сессию, не при смене локации
+  private static promptedThisSession = false; // оценка/ярлык/вход — не больше одного за сессию
   private grid: (Item | null)[][] = [];
   private spawnBar?: Phaser.GameObjects.Graphics;
   private coinsText!: Phaser.GameObjects.Text;
@@ -95,6 +97,8 @@ export class GameScene extends Phaser.Scene {
       const st = streakStatus();
       if (st) this.streakPanel(st, () => this.offlinePopup());
       else this.offlinePopup();
+      // Спокойный вход: если игрок уже закрыл входные окна — предлагаем ярлык.
+      this.time.delayedCall(4000, () => void this.platformPrompt('session'));
     }
     sdk.gameplayStart();
 
@@ -150,7 +154,7 @@ export class GameScene extends Phaser.Scene {
     img.on('pointerdown', () => {
       const reward = Math.max(GOLDEN.minReward, this.totalIncome() * Math.round(GOLDEN.rewardSec * 1000 / INCOME.periodMs));
       S.coins += reward;
-      jingleFanfare();
+      jingleFanfare(); buzz(BUZZ.golden);
       track('golden_tap');
       ui.toast(this, img.x, img.y - 40, t('golden.tap', { n: reward }));
       img.destroy();
@@ -378,7 +382,12 @@ export class GameScene extends Phaser.Scene {
     S.score += level * 2;
     if (level >= 4) track('merge_high', { level });
     if (S.battle.side >= 0 && a.chain === S.battle.side) S.battle.points += level; // очки «Битвы недели»
-    if (level === 5 && !S.customNames[a.chain]) this.renamePanel(a.chain); // легендарка заслуживает имени
+    buzz(BUZZ.merge);
+    if (level === 5) {
+      // Легендарка заслуживает имени; если имя уже есть — это всё равно «вау»-момент.
+      if (!S.customNames[a.chain]) this.renamePanel(a.chain);
+      else void this.platformPrompt('wow');
+    }
     if (a.chain === EVENT_CHAIN_INDEX && this.ev) {
       S.event.points += level * 2;
       ui.toast(this, W / 2, GRID.y + 140, t('event.points', { emoji: this.ev.emoji, n: level * 2 }));
@@ -511,32 +520,45 @@ export class GameScene extends Phaser.Scene {
   // ---------- настройки: звук (важно для модерации), язык, сброс ----------
   private settingsPanel() {
     const p = ui.panel(this, t('set.title'));
-    const soundBtn = ui.button(this, W / 2, H / 2 - 300, 480, 72,
+    const soundBtn = ui.button(this, W / 2, H / 2 - 350, 480, 68,
       isMuted() ? t('set.soundOff') : t('set.soundOn'), isMuted() ? 0x3a3a55 : 0x2e7d5b, () => {
         const on = !isMuted();
         setMuted(on); S.soundOn = !on; persist(true);
         (soundBtn.list[1] as Phaser.GameObjects.Text).setText(on ? t('set.soundOff') : t('set.soundOn'));
         if (!on) coinSound();
-      }, 26);
+      }, 25);
     this.addTo(p, soundBtn);
-    this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('set.lang'), { fontFamily: FONT, fontSize: '26px', color: '#c9beee' }).setOrigin(0.5));
+    // Вибрация — второй канал «сочности», работает даже с выключенным звуком.
+    const hapBtn = ui.button(this, W / 2, H / 2 - 272, 480, 68,
+      S.hapticsOn ? t('set.hapticsOn') : t('set.hapticsOff'), S.hapticsOn ? 0x2e7d5b : 0x3a3a55, () => {
+        S.hapticsOn = !S.hapticsOn; persist(true);
+        (hapBtn.list[1] as Phaser.GameObjects.Text).setText(S.hapticsOn ? t('set.hapticsOn') : t('set.hapticsOff'));
+        buzz(BUZZ.claim); // сразу дать почувствовать результат
+      }, 25);
+    this.addTo(p, hapBtn);
+    this.addTo(p, this.add.text(W / 2, H / 2 - 200, t('set.lang'), { fontFamily: FONT, fontSize: '25px', color: '#c9beee' }).setOrigin(0.5));
     LANGS.forEach((l, i) => {
       const cur = getLang() === l.code;
-      this.addTo(p, ui.button(this, W / 2 - 200 + i * 200, H / 2 - 130, 180, 64, l.label, cur ? 0x2e7d5b : 0x5a48a8, () => {
+      this.addTo(p, ui.button(this, W / 2 - 200 + i * 200, H / 2 - 140, 180, 62, l.label, cur ? 0x2e7d5b : 0x5a48a8, () => {
         if (cur) return;
         S.lang = l.code as Lang; setLang(l.code); persist(true);
         track('lang_switch', { lang: l.code });
         this.scene.restart(); // перерисовать всю сцену на новом языке
       }, 22));
     });
-    this.addTo(p, ui.button(this, W / 2, H / 2 + 120, 480, 68, t('set.reset'), 0x9d2e4d, () => {
+    // Ярлык вручную: игра предлагает его сама раз в жизни, но кто-то захочет позже.
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 30, 480, 66, t('set.shortcut'), 0x5a48a8, async () => {
+      if (!await sdk.canShortcut()) { failSound(); return; }
+      if (await sdk.addShortcut()) { S.shortcutAsked = true; persist(true); tada(); ui.toast(this, W / 2, H / 2, t('ask.shortcutDone')); }
+    }, 22));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 160, 480, 66, t('set.reset'), 0x9d2e4d, () => {
       const c = ui.panel(this, t('set.reset'));
       this.addTo(c, this.add.text(W / 2, H / 2 - 120, t('set.resetAsk'), { fontFamily: FONT, fontSize: '28px', color: '#fff', align: 'center' }).setOrigin(0.5));
       this.addTo(c, ui.button(this, W / 2, H / 2 + 20, 460, 74, t('set.resetYes'), 0x9d2e4d, () => {
         resetProgress(); track('progress_reset'); this.scene.restart();
       }, 24));
     }, 24));
-    this.addTo(p, this.add.text(W / 2, H / 2 + 250, `${t('set.version', { v: VERSION })}\n${t('set.credits')}`,
+    this.addTo(p, this.add.text(W / 2, H / 2 + 280, `${t('set.version', { v: VERSION })}\n${t('set.credits')}`,
       { fontFamily: FONT, fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
   }
 
@@ -608,12 +630,12 @@ export class GameScene extends Phaser.Scene {
     const free = this.freeLeft() <= 0;
     const cost = this.spawnCost();
     if (!free && S.coins < cost) {
-      failSound();
+      failSound(); buzz(BUZZ.fail);
       ui.toast(this, 148, 1080, t('hud.freeSoon', { n: Math.ceil(this.freeLeft() / 1000) }), '#ff7070');
       return;
     }
     const cell = this.findEmpty();
-    if (!cell) { failSound(); ui.toast(this, 148, 1080, t('common.boardFull'), '#ff7070'); return; }
+    if (!cell) { failSound(); buzz(BUZZ.fail); ui.toast(this, 148, 1080, t('common.boardFull'), '#ff7070'); return; }
     if (free) {
       S.freeLast = Date.now();
     } else {
@@ -729,7 +751,7 @@ export class GameScene extends Phaser.Scene {
       S.coins += rw.coins ?? 0; S.gems += rw.gems ?? 0;
       if (rw.chest) this.spawnReward(4);
       S.streakDay = day; S.streakLast = today();
-      tada(); track('daily_claim', { day });
+      tada(); buzz(BUZZ.claim); track('daily_claim', { day });
       this.refreshHud(); persist(true); p.destroy(); onDone();
     };
     if (mode === 'claim') {
@@ -987,10 +1009,13 @@ export class GameScene extends Phaser.Scene {
     sdk.submitScore('cups', S.cups);
     track(win ? 'arena_win' : 'arena_lose', { cups: S.cups });
     persist(true); this.refreshHud();
-    const p = ui.panel(this, t(win ? 'arena.win' : 'arena.lose'));
     // Повышение в лиге — отдельный праздник, его не должно съесть окно результата.
     const leagueNow = leagueOf(S.cups);
-    if (leagueNow.cups > leagueBefore.cups) {
+    const promoted = leagueNow.cups > leagueBefore.cups;
+    const p = ui.panel(this, t(win ? 'arena.win' : 'arena.lose'),
+      promoted ? () => void this.platformPrompt('wow') : undefined);
+    if (win) buzz(BUZZ.win);
+    if (promoted) {
       jingleFanfare(); track('league_up', { league: leagueNow.key });
       this.addTo(p, this.add.text(W / 2, H / 2 - 330, t('arena.leagueUp', { name: t(`league.${leagueNow.key}`) }),
         { fontFamily: FONT, fontSize: '30px', color: '#ffe066', fontStyle: '800', align: 'center' }).setOrigin(0.5));
@@ -1080,7 +1105,8 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- имя для легендарки: пользовательский контент = скриншоты ----------
   private renamePanel(chain: number) {
-    const p = ui.panel(this, t('rename.title'));
+    // Закрыл окно имени — самый радостный момент за сессию, тут и просим оценку.
+    const p = ui.panel(this, t('rename.title'), () => void this.platformPrompt('wow'));
     this.addTo(p, this.add.image(W / 2, H / 2 - 230, textureKey(chain, 5)).setDisplaySize(190, 190));
     this.addTo(p, this.add.text(W / 2, H / 2 - 80, t('rename.desc', { name: this.cname(chain, 5) }),
       { fontFamily: FONT, fontSize: '24px', color: '#fff', align: 'center' }).setOrigin(0.5));
@@ -1128,6 +1154,58 @@ export class GameScene extends Phaser.Scene {
       }
       p.destroy();
     }));
+  }
+
+  // ---------- платформенные предложения: оценка, облако, ярлык ----------
+  /**
+   * Оценка влияет на ранжирование игры в каталоге, вход в аккаунт спасает прогресс
+   * гостя, ярлык возвращает игрока в один тап. Всё это бесплатные проценты к
+   * удержанию — но только если не надоедать: одно предложение за сессию, никогда
+   * поверх открытого окна, и «Не сейчас» уважается неделю.
+   *
+   * `moment`: 'wow' — сразу после победного момента (легендарка, новая лига),
+   * 'session' — спокойный вход в игру.
+   */
+  private async platformPrompt(moment: 'wow' | 'session') {
+    if (GameScene.promptedThisSession || ui.panelsOpen() || !S.tips.income) return;
+    const week = 7 * 86_400_000;
+    if (moment === 'wow' && !S.reviewDone && Date.now() - S.reviewAsked > week && await sdk.canReview()) {
+      S.reviewAsked = Date.now(); persist(true);
+      this.askPanel('review', '⭐', async () => {
+        const sent = await sdk.requestReview();
+        if (sent) { S.reviewDone = true; persist(true); }
+        return sent;
+      });
+      return;
+    }
+    // Гость с легендаркой уже реально рискует прогрессом — момент честный.
+    if (moment === 'wow' && !sdk.isAuthorized() && Date.now() - S.authAsked > week) {
+      S.authAsked = Date.now(); persist(true);
+      this.askPanel('auth', '☁️', () => sdk.authorize());
+      return;
+    }
+    if (S.daysPlayed >= 2 && !S.shortcutAsked && await sdk.canShortcut()) {
+      S.shortcutAsked = true; persist(true);
+      this.askPanel('shortcut', '📌', () => sdk.addShortcut());
+    }
+  }
+
+  /** Окно предложения: заголовок/текст/кнопка из ключей `ask.<key>*`, отказ без последствий. */
+  private askPanel(key: string, icon: string, run: () => Promise<boolean>) {
+    GameScene.promptedThisSession = true;
+    track(`ask_${key}`);
+    const p = ui.panel(this, t(`ask.${key}Title`));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 290, icon, { fontSize: '110px' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 120, t(`ask.${key}Desc`),
+      { fontFamily: FONT, fontSize: '27px', color: '#fff', align: 'center', lineSpacing: 8 }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 80, 520, 78, t(`ask.${key}Yes`), 0x2e7d5b, async () => {
+      p.destroy();
+      if (!await run()) return;
+      tada(); buzz(BUZZ.claim);
+      ui.toast(this, W / 2, H / 2, t(`ask.${key}Done`));
+      track(`ask_${key}_yes`);
+    }, 26));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 185, 380, 62, t('ask.later'), 0x3a3a55, () => p.destroy(), 22));
   }
 
   // ---------- офлайн-доход ----------

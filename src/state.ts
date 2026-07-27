@@ -56,9 +56,18 @@ export const S = {
   score: 0,
   battles: 0,               // боёв всего — якорь для interstitial
   sold: 0,                  // продано существ (для аналитики и квестов)
+  // платформенные предложения: оценка (рейтинг = ранжирование), ярлык, вход в аккаунт
+  reviewAsked: 0,           // когда предлагали оценить (0 = никогда)
+  reviewDone: false,        // отзыв отправлен — больше не предлагаем
+  shortcutAsked: false,
+  authAsked: 0,             // отказ от входа не повторяем чаще раза в неделю
+  firstDay: '',             // дата первого запуска
+  lastDay: '',              // последний день с заходом — считает daysPlayed
+  daysPlayed: 0,
   // настройки игрока
   lang: '' as Lang | '',   // пусто = язык платформы/браузера
   soundOn: true,
+  hapticsOn: true,
   // подсказки FTUE 2.0: каждая показывается один раз
   tips: { income: false, tap: false, arena: false, card: false },
 };
@@ -88,6 +97,7 @@ function ensureShapes() {
   const tips = (S.tips ?? {}) as Partial<typeof S.tips>;
   S.tips = { income: !!tips.income, tap: !!tips.tap, arena: !!tips.arena, card: !!tips.card };
   S.soundOn ??= true;
+  S.hapticsOn ??= true;
   // Миграция старых сейвов: плоский items становится полем первой локации.
   const legacy = (S as any).items as number[][] | undefined;
   if (legacy?.length && !S.itemsZ.some(z => z.length)) S.itemsZ[0] = legacy;
@@ -105,10 +115,19 @@ export function streakStatus(): 'claim' | 'lost' | null {
   return S.streakLast === yesterday || S.streakDay === 0 ? 'claim' : 'lost';
 }
 
+/** Календарь заходов: сколько РАЗНЫХ дней игрок открывал игру (не подряд — всего). */
+function touchDay() {
+  if (S.lastDay === today()) return;
+  S.firstDay ||= today();
+  S.lastDay = today();
+  S.daysPlayed++;
+}
+
 export async function restore(): Promise<boolean> {
   const d = await sdk.load();
   if (d) Object.assign(S, d);
   ensureShapes();
+  touchDay();
   resetDailies();
   if (S.lang) setLang(S.lang); // выбор игрока важнее языка платформы
   return !!d;
@@ -116,7 +135,7 @@ export async function restore(): Promise<boolean> {
 
 /** Полный сброс прогресса (настройки языка/звука сохраняем — это не прогресс). */
 export function resetProgress() {
-  const keep = { lang: S.lang, soundOn: S.soundOn };
+  const keep = { lang: S.lang, soundOn: S.soundOn, hapticsOn: S.hapticsOn };
   localStorage.removeItem('save');
   Object.assign(S, {
     coins: 0, gems: 0, itemsZ: [[]], zone: 0, zoneUnlocked: [true], rowUnlocked: false,

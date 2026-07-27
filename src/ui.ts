@@ -57,9 +57,16 @@ export function chip(s: Phaser.Scene, x: number, y: number, w: number, h: number
   return c;
 }
 
+// Сколько модалок открыто сейчас. Нужно, чтобы игра не показывала свои
+// предложения (оценка, ярлык) поверх уже открытого окна.
+let openPanels = 0;
+export const panelsOpen = () => openPanels;
+
 /** Полноэкранная модалка: тёмный фон блокирует ввод, шапка, ✕ и кнопка «Закрыть». */
 export function panel(s: Phaser.Scene, title: string, onClose?: () => void): Phaser.GameObjects.Container {
   const root = s.add.container(0, 0).setDepth(50);
+  openPanels++;
+  root.once(Phaser.GameObjects.Events.DESTROY, () => { openPanels = Math.max(0, openPanels - 1); });
   const dim = s.add.rectangle(W / 2, H / 2, W, H, 0x08050f, 0.78).setInteractive();
   const g = s.add.graphics();
   g.fillStyle(0x000000, 0.5); g.fillRoundedRect(W / 2 - 328 + 4, H / 2 - 460 + 8, 656, 920, 28); // тень

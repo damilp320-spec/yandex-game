@@ -81,6 +81,53 @@ export async function restorePurchases(): Promise<string[]> {
   catch { return []; }
 }
 
+// ---------- платформенные рычаги: оценка, ярлык, авторизация ----------
+// Рейтинг игры влияет на её ранжирование в каталоге, а ярлык и облачный сейв —
+// на возвраты. Всё это бесплатные проценты к удержанию, но навязчивость бьёт по
+// ним сильнее, чем помогает: моменты показа выбираются в GameScene.
+
+/** Можно ли просить оценку (платформа сама помнит, что игрок уже оценил). */
+export async function canReview(): Promise<boolean> {
+  if (!ysdk) return true; // dev-мок: считаем, что можно
+  try { return !!(await ysdk.feedback.canReview()).value; }
+  catch { return false; }
+}
+
+/** Нативное окно оценки. true — отзыв отправлен. */
+export async function requestReview(): Promise<boolean> {
+  track('review_prompt');
+  if (!ysdk) { console.log('[mock] review dialog'); return true; }
+  try { return !!(await ysdk.feedback.requestReview()).feedbackSent; }
+  catch { return false; }
+}
+
+/** Можно ли предложить ярлык на рабочий стол (на десктопе платформа откажет). */
+export async function canShortcut(): Promise<boolean> {
+  if (!ysdk) return true;
+  try { return !!(await ysdk.shortcut?.canShowPrompt())?.canShow; }
+  catch { return false; }
+}
+
+export async function addShortcut(): Promise<boolean> {
+  track('shortcut_prompt');
+  if (!ysdk) { console.log('[mock] shortcut prompt'); return true; }
+  try { return (await ysdk.shortcut.showPrompt()).outcome === 'accepted'; }
+  catch { return false; }
+}
+
+/** Гость (режим lite) теряет прогресс при смене устройства — ему предлагаем вход. */
+export const isAuthorized = (): boolean => !!player && player.getMode?.() !== 'lite';
+
+export async function authorize(): Promise<boolean> {
+  track('auth_prompt');
+  if (!ysdk) { console.log('[mock] auth dialog'); return true; }
+  try {
+    await ysdk.auth.openAuthDialog();
+    player = await ysdk.getPlayer({ scopes: false }).catch(() => player);
+    return isAuthorized();
+  } catch { return false; }
+}
+
 export function submitScore(board: string, score: number): void {
   ysdk?.getLeaderboards?.()
     .then((lb: any) => lb.setLeaderboardScore(board, score))
