@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -581,8 +581,11 @@ export class GameScene extends Phaser.Scene {
         this.scene.restart(); // перерисовать всю сцену на новом языке
       }, 22));
     });
+    // Промокод: живой канал владельца в соцсети — и метка в аналитике, по которой
+    // видно, какой именно пост привёл игроков.
+    this.addTo(p, ui.button(this, W / 2, H / 2 - 50, 480, 66, t('set.promo'), 0x8f5ad0, () => this.redeemPromo(), 22));
     // Ярлык вручную: игра предлагает его сама раз в жизни, но кто-то захочет позже.
-    this.addTo(p, ui.button(this, W / 2, H / 2 - 30, 480, 66, t('set.shortcut'), 0x5a48a8, async () => {
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 30, 480, 66, t('set.shortcut'), 0x5a48a8, async () => {
       if (!await sdk.canShortcut()) { failSound(); return; }
       if (await sdk.addShortcut()) { S.shortcutAsked = true; persist(true); tada(); ui.toast(this, W / 2, H / 2, t('ask.shortcutDone')); }
     }, 22));
@@ -595,6 +598,25 @@ export class GameScene extends Phaser.Scene {
     }, 24));
     this.addTo(p, this.add.text(W / 2, H / 2 + 280, `${t('set.version', { v: VERSION })}\n${t('set.credits')}`,
       { fontFamily: FONT, fontSize: '20px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+  }
+
+  /** Ввод промокода: разбираем награду, отмечаем код использованным. */
+  private redeemPromo() {
+    const raw = window.prompt(t('promo.prompt'), '');
+    if (!raw?.trim()) return;
+    const code = promoByCode(raw);
+    if (!code) { failSound(); ui.toast(this, W / 2, H / 2, t('promo.bad'), '#ff7070'); return; }
+    if (S.codesUsed.includes(code.code)) { failSound(); ui.toast(this, W / 2, H / 2, t('promo.used'), '#ff7070'); return; }
+    S.codesUsed.push(code.code);
+    if (code.gems) S.gems += code.gems;
+    if (code.egg) this.giveEgg(code.egg);
+    tada(); buzz(BUZZ.claim);
+    track('code_redeem', { code: code.code });
+    ui.toast(this, W / 2, H / 2, t('promo.ok', {
+      gems: code.gems ? t('promo.gems', { n: code.gems }) : '',
+      egg: code.egg ? t('promo.egg', { name: t(`egg.${code.egg}`) }) : '',
+    }));
+    this.refreshHud(); persist(true);
   }
 
   // ---------- FTUE 2.0: по одной подсказке на механику, каждая один раз ----------

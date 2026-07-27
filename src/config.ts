@@ -95,6 +95,30 @@ export const INCUBATOR = {
   queueMax: 2,
 };
 
+/**
+ * Промокоды: канал владельца в соцсетях и измеримый источник трафика — метка кода
+ * уходит в аналитику, и видно, какой пост сработал. Проверка обычным списком, без
+ * криптографии: награды маленькие, а «подобранный» код даёт ровно то же, что пост.
+ *
+ * Награды только в кристаллах и яйцах: фиксированные суммы монет обесцениваются
+ * за неделю, а кристаллы и яйца остаются ценными на любом этапе.
+ */
+export interface PromoCode { code: string; gems?: number; egg?: EggType; until: string }
+export const PROMO: PromoCode[] = [
+  { code: 'SIXSEVEN', gems: 67, until: '2026-12-31' },
+  { code: 'BRAINROT', gems: 30, egg: 'common', until: '2026-12-31' },
+  { code: 'CAPYBARA', gems: 25, egg: 'rare', until: '2026-12-31' },
+  { code: 'TRALALA', egg: 'gold', until: '2026-12-31' },
+  { code: 'LABMERGE', gems: 40, until: '2026-12-31' },
+];
+
+/** Действующий код по вводу игрока (регистр и пробелы не важны). */
+export const promoByCode = (raw: string): PromoCode | null => {
+  const code = raw.trim().toUpperCase();
+  const day = new Date().toISOString().slice(0, 10);
+  return PROMO.find(p => p.code === code && p.until >= day) ?? null;
+};
+
 export const PRICES = {
   chestGems: 25,
   boostGems: 20,

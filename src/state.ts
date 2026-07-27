@@ -59,6 +59,7 @@ export const S = {
   // счётчики «за всё время» для достижений (дневные лежат в quests.progress)
   stats: { merges: 0, taps: 0, spawns: 0, golden: 0 } as Record<string, number>,
   achClaimed: [] as boolean[],
+  codesUsed: [] as string[],   // промокоды одноразовые
   // инкубатор: одно яйцо «в работе» + очередь, чтобы награды не пропадали
   egg: null as { type: EggType; startedAt: number; ads: number; adsDay: string } | null,
   eggQueue: [] as EggType[],
@@ -103,6 +104,7 @@ function ensureShapes() {
   // (индекс за пределами массива читается как false) — иначе state зависел бы от
   // achievements, а тот от state: лишний цикл импортов ради ничего.
   S.achClaimed ??= [];
+  S.codesUsed ??= [];
   S.stats = { merges: 0, taps: 0, spawns: 0, golden: 0, ...(S.stats ?? {}) };
   QUESTS.forEach(q => { S.quests.progress[q.id] ??= 0; });
   // старые сейвы: подсказки/настройки могли не существовать
@@ -158,7 +160,7 @@ export function resetProgress() {
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
     starterOffered: false, tips: { income: false, tap: false, arena: false, card: false },
     egg: null, eggQueue: [], eggsHatched: 0,
-    stats: { merges: 0, taps: 0, spawns: 0, golden: 0 }, achClaimed: [], ...keep,
+    stats: { merges: 0, taps: 0, spawns: 0, golden: 0 }, achClaimed: [], codesUsed: [], ...keep,
   });
   ensureShapes();
   persist(true);
