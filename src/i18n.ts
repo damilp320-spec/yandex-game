@@ -245,6 +245,15 @@ const RU: Record<string, string> = {
   'ach.shareSecret': 'У меня есть секретный 67 в Brainrot Lab: Merge 🔵6️⃣7️⃣ Шанс — 6,7%. Слабо повторить?',
   'ach.shareSpaghetti': 'Я вырастил Спагеттиссимо Прайм в Brainrot Lab: Merge 🍝 Спагетти-магнат — это я. Игра на Яндекс Играх!',
 
+  'season.title': '🗓️ Итоги сезона',
+  'season.peak': 'Твоя лучшая лига сезона:',
+  'season.reward': 'Награда: +{gems}💎',
+  'season.frame': '🖼️ Открыта рамка профиля «{name}»!',
+  'season.reset': 'Кубки нового сезона: {cups}🏆\n(пороги наград сохранены — они\nсчитаются по личному рекорду)',
+  'season.claim': 'Забрать и начать сезон',
+  'season.now': 'Сезон {id} · до конца {days} дн.',
+  'season.frameHint': 'Тап — сменить рамку',
+
   'mut.banner': '🧬 Сегодня мутирует {name} — доход ×{mult}!',
   'mut.card': '🧬 Мутация дня: доход ×{mult}',
   'streak.tomorrow': 'Завтра: {reward}',
@@ -510,6 +519,15 @@ const EN: Record<string, string> = {
   'ach.shareSecret': 'I own the secret 67 in Brainrot Lab: Merge 🔵6️⃣7️⃣ A 6.7% chance. Can you match that?',
   'ach.shareSpaghetti': 'I raised Spaghettissimo Prime in Brainrot Lab: Merge 🍝 Spaghetti tycoon, that\'s me. On Yandex Games!',
 
+  'season.title': '🗓️ Season results',
+  'season.peak': 'Your best league this season:',
+  'season.reward': 'Reward: +{gems}💎',
+  'season.frame': '🖼️ Profile frame "{name}" unlocked!',
+  'season.reset': 'New season cups: {cups}🏆\n(reward tiers are kept — they\ncount your all-time best)',
+  'season.claim': 'Claim and start the season',
+  'season.now': 'Season {id} · {days}d left',
+  'season.frameHint': 'Tap to switch frame',
+
   'mut.banner': '🧬 {name} is mutating today — income ×{mult}!',
   'mut.card': '🧬 Mutation of the day: income ×{mult}',
   'streak.tomorrow': 'Tomorrow: {reward}',
@@ -772,6 +790,15 @@ const TR: Record<string, string> = {
   'ach.shareSold': 'Brainrot Lab: Merge oyununda {n} «dost» sattım 💰 İş iştir. Yandex Games\'te!',
   'ach.shareSecret': 'Brainrot Lab: Merge oyununda gizli 67 bende 🔵6️⃣7️⃣ Şans %6,7. Yapabilir misin?',
   'ach.shareSpaghetti': 'Brainrot Lab: Merge oyununda Spaghettissimo Prime yetiştirdim 🍝 Spagetti kralı benim. Yandex Games\'te!',
+
+  'season.title': '🗓️ Sezon sonuçları',
+  'season.peak': 'Bu sezonun en iyi ligin:',
+  'season.reward': 'Ödül: +{gems}💎',
+  'season.frame': '🖼️ «{name}» profil çerçevesi açıldı!',
+  'season.reset': 'Yeni sezon kupaları: {cups}🏆\n(ödül eşikleri korunur — kişisel\nrekoruna göre sayılır)',
+  'season.claim': 'Al ve sezona başla',
+  'season.now': 'Sezon {id} · {days}g kaldı',
+  'season.frameHint': 'Çerçeveyi değiştirmek için dokun',
 
   'mut.banner': '🧬 Bugün {name} mutasyona uğradı — gelir ×{mult}!',
   'mut.card': '🧬 Günün mutasyonu: gelir ×{mult}',

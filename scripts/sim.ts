@@ -16,7 +16,7 @@
 //   инкубатор: яйцо за каждую INCUBATOR.winEvery-ю победу и за новую лигу, вылупление
 //   по расписанию (в том числе пока игрок офлайн) — это новый кран существ,
 //   прокачка казармы, когда монет втрое больше цены — это главный слив монет.
-import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain } from '../src/config';
+import { GRID, INCOME, spawnCostOf, PRICES, ZONES, GEN, sellPrice, leagueOf, incomeOf, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, SEASON, leagueIndex, LEAGUES } from '../src/config';
 import { unitStats, unitPower, teamPower, upgradeCost, makeEnemy, simulateBattle, simulateBattleDetailed, cupsDelta, REMATCH_BUFF, BALANCE, ARENA_MILESTONES } from '../src/arena';
 import { S } from '../src/state';
 
@@ -350,6 +350,32 @@ console.log(`  • инкубатор: ${sim.eggsHatched} яиц за ${DAYS} д
   `${fmt(sim.eggCoins)}🪙 компенсации (поле было забито)`);
 console.log(`  • вклад тапов vs пассив: ×${last.tapShare.toFixed(1)} ` +
   `${last.tapShare > 5 ? '— ПЛОХО: тапы обесценивают пассивный доход и офлайн' : '— OK'}`);
+
+// ---------- СЕЗОН АРЕНЫ ----------
+// Мягкий сброс ×SEASON.reset должен давать «сезонный забег» на пару вечеров, а не
+// стену: считаем, за сколько боёв команда конца прогона возвращается на своё плато.
+console.log('\n=== СЕЗОН АРЕНЫ: возврат на плато после сброса ===');
+{
+  S.team = sim.team.map(c => [c.chain, c.level]);
+  S.upgrades = { atk: sim.barracks, hp: sim.barracks };
+  // Плато = кубки, на которых лестница уравновешивается (берём из прогона экономики).
+  const plateau = sim.cups;
+  let cups = Math.floor(plateau * SEASON.reset);
+  const from = cups;
+  let battles = 0;
+  while (cups < plateau && battles < 500) {
+    S.cups = cups;
+    const en = makeEnemy();
+    const power = teamPower(en.team, false) * en.factor;
+    const win = simulateBattle(S.team, en.team, 1, en.factor);
+    cups = Math.max(0, cups + cupsDelta(win, power));
+    battles++;
+  }
+  console.log(`  плато ${plateau}🏆 → сброс до ${from}🏆 → возврат за ${battles} боёв ` +
+    `(${(battles / BATTLES_PER_SESSION).toFixed(1)} сессий; норма 20–35 боёв)`);
+  console.log(`  награда за пиковую лигу: ${LEAGUES.map((l, i) => `${l.key} ${SEASON.gems[i]}💎`).join(', ')}`);
+  console.log(`  лига после сброса: ${LEAGUES[leagueIndex(from)].key} (была ${LEAGUES[leagueIndex(plateau)].key})`);
+}
 
 // ---------- БОИ ----------
 const N = 1000;

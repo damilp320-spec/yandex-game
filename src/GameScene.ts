@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode } from './config';
+import { W, H, GRID, INCOME, spawnCostOf, GOLDEN, incomeOf, OFFLINE_MIN_COINS, GEN, PRICES, CHAINS, RARITY, sellPrice, leagueOf, nextLeague, leagueIndex, leagueByKey, LEAGUES, SEASON, seasonId, INTERSTITIAL, Chain, ZONES, SECRET_CHAIN, FONT, VERSION, EGGS, EggType, INCUBATOR, MUTATION_MULT, mutationChain, promoByCode } from './config';
 import { activeEvent, daysLeft, EventDef } from './events';
 import { generateSprites, textureKey, EVENT_CHAIN_INDEX } from './sprites';
 import { queueSkinLoads } from './assets';
@@ -109,6 +109,7 @@ export class GameScene extends Phaser.Scene {
       // Спокойный вход: если игрок уже закрыл входные окна — предлагаем ярлык.
       this.time.delayedCall(4000, () => void this.platformPrompt('session'));
     }
+    this.checkSeason();
     // Мутация дня: сообщаем один раз за сессию и только если цепочка доступна
     // игроку — иначе это шум про запертую локацию.
     if (!GameScene.mutShown && ZONES.some((z, i) => S.zoneUnlocked[i] && z.chains.includes(this.mutChain))) {
@@ -535,7 +536,11 @@ export class GameScene extends Phaser.Scene {
     // Главная кнопка: приподнята в зазор между кнопками действий, со свечением.
     const hero = this.add.container(W / 2, 1184).setDepth(3);
     const hg = this.add.graphics();
-    hg.lineStyle(6, 0xffb84d, 0.22); hg.strokeRoundedRect(-75, -53, 150, 106, 26); // мягкое свечение
+    // Рамка профиля (заработана в сезоне) красит свечение главной кнопки — статус
+    // виден на главном экране, а не только внутри арены.
+    const fr = this.frameLeague();
+    hg.lineStyle(6, fr ? fr.color : 0xffb84d, fr ? 0.55 : 0.22);
+    hg.strokeRoundedRect(-75, -53, 150, 106, 26);
     hg.fillStyle(0x000000, 0.4); hg.fillRoundedRect(-70, -44, 140, 96, 22);
     hg.fillGradientStyle(0xd4703a, 0xd4703a, 0x9d5a2e, 0x9d5a2e, 1);
     hg.fillRoundedRect(-70, -48, 140, 96, 22);
@@ -679,7 +684,7 @@ export class GameScene extends Phaser.Scene {
     this.tickEgg();
     const claimable = QUESTS.some((q, i) => !S.quests.claimed[i] && S.quests.progress[q.id] >= q.target);
     this.questBadge?.setVisible(claimable);
-    this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cups >= m.cups));
+    this.arenaBadge?.setVisible(ARENA_MILESTONES.some((m, i) => !S.arenaClaimed[i] && S.cupsBest >= m.cups));
     this.pediaBadge?.setVisible(anyAchClaimable());
     this.checkTips();
   }
@@ -999,6 +1004,64 @@ export class GameScene extends Phaser.Scene {
     ui.toast(this, W / 2, H / 2, t('common.copied'));
   }
 
+  // ---------- сезон арены: месячный цикл с мягким сбросом ----------
+  /**
+   * Сезон = календарный месяц. На стыке выдаём награду за пиковую лигу и мягко
+   * срезаем кубки: лестница снова даёт быстрый рост вместо стены. Пороги наград
+   * живут на S.cupsBest, поэтому сброс ничего не отбирает.
+   */
+  private checkSeason() {
+    const now = seasonId();
+    if (!S.season.id) { // первый запуск после обновления — просто начинаем сезон
+      S.season = { id: now, peak: leagueIndex(S.cups) };
+      persist(true);
+      return;
+    }
+    if (S.season.id === now) { S.season.peak = Math.max(S.season.peak, leagueIndex(S.cups)); return; }
+    const peak = Math.max(S.season.peak, leagueIndex(S.cups));
+    const gems = SEASON.gems[peak] ?? SEASON.gems[0];
+    const league = LEAGUES[peak];
+    const before = S.cups;
+    S.cups = Math.floor(S.cups * SEASON.reset);
+    S.season = { id: now, peak: leagueIndex(S.cups) };
+    const fresh = !S.frames.includes(league.key);
+    if (fresh) S.frames.push(league.key);
+    if (!S.frame || leagueByKey(S.frame).cups < league.cups) S.frame = league.key; // надеваем лучшую
+    S.gems += gems;
+    track('season_end', { peak: league.key, cups: before });
+    persist(true);
+    this.seasonPanel(league, gems, fresh);
+  }
+
+  private seasonPanel(league: typeof LEAGUES[number], gems: number, fresh: boolean) {
+    const p = ui.panel(this, t('season.title'));
+    jingleFanfare(); buzz(BUZZ.win);
+    this.addTo(p, this.add.text(W / 2, H / 2 - 320, t('season.peak'),
+      { fontFamily: FONT, fontSize: '24px', color: '#c9beee' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 240, league.emblem, { fontSize: '96px' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 155, t(`league.${league.key}`),
+      { fontFamily: FONT, fontSize: '34px', color: `#${league.color.toString(16).padStart(6, '0')}`, fontStyle: '800' }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 - 90, t('season.reward', { gems }),
+      { fontFamily: FONT, fontSize: '30px', color: '#fff', fontStyle: '700' }).setOrigin(0.5));
+    if (fresh)
+      this.addTo(p, this.add.text(W / 2, H / 2 - 30, t('season.frame', { name: t(`league.${league.key}`) }),
+        { fontFamily: FONT, fontSize: '23px', color: '#ffe066', align: 'center', wordWrap: { width: 580 } }).setOrigin(0.5));
+    this.addTo(p, this.add.text(W / 2, H / 2 + 70, t('season.reset', { cups: S.cups }),
+      { fontFamily: FONT, fontSize: '22px', color: '#c9beee', align: 'center', lineSpacing: 6 }).setOrigin(0.5));
+    this.addTo(p, ui.button(this, W / 2, H / 2 + 200, 520, 78, t('season.claim'), 0x2e7d5b, () => {
+      tada(); this.refreshHud(); p.destroy();
+    }, 25));
+  }
+
+  /** Сколько дней осталось до конца календарного месяца. */
+  private seasonDaysLeft(): number {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate() + 1;
+  }
+
+  /** Рамка профиля: цвет и эмблема надетой рамки (или текущей лиги, пока рамок нет). */
+  private frameLeague() { return S.frame ? leagueByKey(S.frame) : null; }
+
   // ---------- Арена: команда 5 бойцов, кубки, казарма, лидерборд ----------
   private arenaPanel() {
     while (S.arenaClaimed.length < ARENA_MILESTONES.length) S.arenaClaimed.push(false);
@@ -1063,7 +1126,7 @@ export class GameScene extends Phaser.Scene {
     pending.forEach(({ m, i }, row) => {
       const y = H / 2 + 106 + row * 48;
       const rw = [m.coins && `${m.coins}🪙`, m.gems && `${m.gems}💎`, m.chest && t('event.chest')].filter(Boolean).join(' + ');
-      const reached = S.cups >= m.cups;
+      const reached = S.cupsBest >= m.cups;
       this.addTo(p, this.add.text(W / 2 - 280, y, `${m.cups}🏆 — ${rw}`,
         { fontFamily: FONT, fontSize: '20px', color: reached ? '#fff' : '#6b6490', fontStyle: reached ? '600' : '400' }).setOrigin(0, 0.5));
       if (reached)
@@ -1077,6 +1140,23 @@ export class GameScene extends Phaser.Scene {
     if (!pending.length)
       this.addTo(p, this.add.text(W / 2, H / 2 + 150, t('arena.allClaimed'),
         { fontFamily: FONT, fontSize: '22px', color: '#8f86b8', align: 'center' }).setOrigin(0.5));
+    // Сезон: сколько осталось и какая рамка надета (тап — сменить).
+    this.addTo(p, this.add.text(W / 2, H / 2 + 242, t('season.now', { id: S.season.id || seasonId(), days: this.seasonDaysLeft() }),
+      { fontFamily: FONT, fontSize: '20px', color: '#8f86b8' }).setOrigin(0.5));
+    if (S.frames.length) {
+      const fr = this.frameLeague() ?? LEAGUES[0];
+      const chip = ui.chip(this, W / 2, H / 2 + 284, 420, 40,
+        `${fr.emblem} ${t(`league.${fr.key}`)} · ${t('season.frameHint')}`, `#${fr.color.toString(16).padStart(6, '0')}`);
+      const hit = this.add.rectangle(0, 0, 420, 40, 0xffffff, 0.001).setInteractive();
+      hit.on('pointerdown', () => {
+        const i = S.frames.indexOf(S.frame);
+        S.frame = S.frames[(i + 1) % S.frames.length];
+        clickSound(1); persist(true);
+        p.destroy(); this.arenaPanel();
+      });
+      chip.add(hit);
+      this.addTo(p, chip);
+    }
     // «Битва недели» жила отдельной кнопкой в шапке — перенесена сюда, к состязаниям.
     this.addTo(p, ui.button(this, W / 2 - 92, H / 2 + 336, 176, 48, t('arena.top'), 0x5a48a8, () => { p.destroy(); this.leaderboardPanel(); }, 17));
     this.addTo(p, ui.button(this, W / 2 + 96, H / 2 + 336, 176, 48, t('wb.short'), 0x9d2e4d, () => { p.destroy(); this.battlePanel(); }, 17));
@@ -1131,6 +1211,8 @@ export class GameScene extends Phaser.Scene {
     const d = cupsDelta(win, enemyPower);
     const leagueBefore = leagueOf(S.cups);
     S.cups = Math.max(0, S.cups + d);
+    S.cupsBest = Math.max(S.cupsBest, S.cups); // пороги наград живут на рекорде
+    S.season.peak = Math.max(S.season.peak, leagueIndex(S.cups));
     S.battles++;
     let coins = 0;
     if (win) { S.wins++; S.quests.progress.wins++; coins = 150 + Math.floor(enemyPower / 5); S.coins += coins; }
@@ -1178,7 +1260,8 @@ export class GameScene extends Phaser.Scene {
       const y = H / 2 - 330 + i * 66;
       const isMe = r.name === me;
       const medal = r.rank <= 3 ? ['🥇', '🥈', '🥉'][r.rank - 1] : ` ${r.rank}.`;
-      this.addTo(p, this.add.text(W / 2 - 280, y, `${medal} ${r.name}`, { fontFamily: FONT, fontSize: '24px', color: isMe ? '#ffe066' : '#fff', fontStyle: isMe ? '800' : '400' }).setOrigin(0, 0.5));
+      const fr = isMe ? this.frameLeague() : null; // рамка профиля видна в общем списке
+      this.addTo(p, this.add.text(W / 2 - 280, y, `${medal} ${r.name}${fr ? ` ${fr.emblem}` : ''}`, { fontFamily: FONT, fontSize: '24px', color: isMe ? '#ffe066' : '#fff', fontStyle: isMe ? '800' : '400' }).setOrigin(0, 0.5));
       this.addTo(p, this.add.text(W / 2 + 280, y, `${r.score}🏆`, { fontFamily: FONT, fontSize: '24px', color: '#c9beee' }).setOrigin(1, 0.5));
     });
   }

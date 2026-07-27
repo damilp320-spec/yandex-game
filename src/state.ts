@@ -49,6 +49,11 @@ export const S = {
   // арена: бойцы сняты с поля и НЕ приносят доход
   team: [] as number[][], // [chain, level], максимум 5
   cups: 0,
+  cupsBest: 0,              // максимум за всё время: на нём живут пороги наград
+  // сезон арены: id месяца + пиковая лига сезона (индекс в LEAGUES)
+  season: { id: '', peak: 0 },
+  frames: [] as string[],   // заработанные рамки профиля (ключи лиг)
+  frame: '',                // надетая рамка
   wins: 0,
   upgrades: { atk: 0, hp: 0 }, // казарма — бесконечный монетный синк
   arenaClaimed: [] as boolean[],
@@ -105,6 +110,9 @@ function ensureShapes() {
   // achievements, а тот от state: лишний цикл импортов ради ничего.
   S.achClaimed ??= [];
   S.codesUsed ??= [];
+  S.frames ??= [];
+  S.season ??= { id: '', peak: 0 };
+  S.cupsBest = Math.max(S.cupsBest ?? 0, S.cups); // старые сейвы: максимум = текущие кубки
   S.stats = { merges: 0, taps: 0, spawns: 0, golden: 0, ...(S.stats ?? {}) };
   QUESTS.forEach(q => { S.quests.progress[q.id] ??= 0; });
   // старые сейвы: подсказки/настройки могли не существовать
@@ -156,7 +164,8 @@ export function resetProgress() {
     streakDay: 0, streakLast: '', quests: { date: '', progress: { merges: 0, wins: 0, spawns: 0, taps: 0 }, claimed: [] },
     discovered: [], freeLast: 0, freeChestLast: 0, event: { id: '', points: 0, claimed: [] },
     spawnBought: 0, incomeRate: 0, boostUntil: 0, boostMult: 1, customNames: {},
-    battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, wins: 0,
+    battle: { week: '', side: -1, points: 0 }, team: [], cups: 0, cupsBest: 0, wins: 0,
+    season: { id: '', peak: 0 }, frames: [], frame: '',
     upgrades: { atk: 0, hp: 0 }, arenaClaimed: [], score: 0, battles: 0, sold: 0,
     starterOffered: false, tips: { income: false, tap: false, arena: false, card: false },
     egg: null, eggQueue: [], eggsHatched: 0,

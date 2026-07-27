@@ -181,13 +181,37 @@ export const RARITY = ['#9aa0b8', '#9aa0b8', '#5a8fd8', '#5a8fd8', '#b85ad0', '#
  * Названия — в i18n по ключу `league.<key>`.
  */
 export const LEAGUES = [
-  { cups: 0, key: 'wood', color: 0x9a7b5a },
-  { cups: 300, key: 'bronze', color: 0xc87b3a },
-  { cups: 800, key: 'silver', color: 0xb8c4d8 },
-  { cups: 1500, key: 'gold', color: 0xffd04a },
-  { cups: 2500, key: 'platinum', color: 0x7fe0d8 },
-  { cups: 4000, key: 'legend', color: 0x3ba7dc },
+  { cups: 0, key: 'wood', color: 0x9a7b5a, emblem: '🪵' },
+  { cups: 300, key: 'bronze', color: 0xc87b3a, emblem: '🥉' },
+  { cups: 800, key: 'silver', color: 0xb8c4d8, emblem: '🥈' },
+  { cups: 1500, key: 'gold', color: 0xffd04a, emblem: '🥇' },
+  { cups: 2500, key: 'platinum', color: 0x7fe0d8, emblem: '💠' },
+  { cups: 4000, key: 'legend', color: 0x3ba7dc, emblem: '🔵' },
 ];
+
+export const leagueIndex = (cups: number) =>
+  LEAGUES.reduce((cur, l, i) => (cups >= l.cups ? i : cur), 0);
+export const leagueByKey = (key: string) => LEAGUES.find(l => l.key === key) ?? LEAGUES[0];
+
+/**
+ * Сезон арены = календарный месяц. На стыке кубки мягко срезаются (×SEASON.reset),
+ * и лестница снова даёт быстрый рост: за пару вечеров игрок возвращается на своё
+ * плато, а не гриндит стену. Прогресс при этом не теряется:
+ *
+ *  • награды за пороги живут на S.cupsBest (максимум за всё время) — уже взятое
+ *    не может «отобраться» сбросом;
+ *  • за пиковую лигу сезона игрок получает кристаллы и РАМКУ профиля — единственную
+ *    косметику, которую нельзя купить: статус должен быть заработан.
+ */
+export const SEASON = {
+  // 0.85, а не «половина»: сим показал, что сброс до 60% отбрасывает игрока на 70
+  // боёв (≈6 дней) — это наказание за перерыв, а не сезонный забег. При 0.85 возврат
+  // занимает ~26 боёв (два вечера), но с высоких кубков всё равно выбивает из лиги,
+  // и её приходится заслуживать заново — ради этого сезон и нужен.
+  reset: 0.85,
+  gems: [10, 20, 40, 80, 130, 200], // по индексу лиги (Деревяшка → ЛЕГЕНДА)
+};
+export const seasonId = (d = new Date()) => d.toISOString().slice(0, 7);
 
 export const leagueOf = (cups: number) =>
   LEAGUES.reduce((cur, l) => (cups >= l.cups ? l : cur), LEAGUES[0]);
